@@ -126,6 +126,8 @@ impl Plugin for DeepSteps {
                 context.send_event(NoteEvent::NoteOff {
                     timing: 0,
                     voice_id: None,
+                    // channel: 0 == MIDI channel 1 (nih-plug is 0-indexed);
+                    // matches the Pd patch's channel 1 per NOTES-sequencer.md.
                     channel: 0,
                     note: po.note,
                     velocity: 0.0,
@@ -148,6 +150,7 @@ impl Plugin for DeepSteps {
                 context.send_event(NoteEvent::NoteOff {
                     timing: po.remaining.max(0) as u32,
                     voice_id: None,
+                    // channel: 0 == MIDI channel 1 (nih-plug is 0-indexed).
                     channel: 0,
                     note: po.note,
                     velocity: 0.0,
@@ -191,6 +194,8 @@ impl Plugin for DeepSteps {
             context.send_event(NoteEvent::NoteOn {
                 timing: on_smp as u32,
                 voice_id: None,
+                // channel: 0 == MIDI channel 1 (nih-plug is 0-indexed);
+                // matches the Pd patch's channel 1 per NOTES-sequencer.md.
                 channel: 0,
                 note,
                 velocity: ev.vel as f32 / 127.0,
@@ -202,6 +207,7 @@ impl Plugin for DeepSteps {
                 context.send_event(NoteEvent::NoteOff {
                     timing: off_abs as u32,
                     voice_id: None,
+                    // channel: 0 == MIDI channel 1 (nih-plug is 0-indexed).
                     channel: 0,
                     note,
                     velocity: 0.0,
@@ -217,3 +223,21 @@ impl Plugin for DeepSteps {
         ProcessStatus::Normal
     }
 }
+
+impl ClapPlugin for DeepSteps {
+    const CLAP_ID: &'static str = "dev.gruber.deepsteps";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Autoencoder MIDI step sequencer");
+    const CLAP_MANUAL_URL: Option<&'static str> = None;
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::NoteEffect, ClapFeature::Utility];
+}
+
+impl Vst3Plugin for DeepSteps {
+    // 16 bytes: D e e p S t e p s G e n M i d i.
+    const VST3_CLASS_ID: [u8; 16] = *b"DeepStepsGenMidi";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
+        &[Vst3SubCategory::Instrument, Vst3SubCategory::Tools];
+}
+
+nih_export_clap!(DeepSteps);
+nih_export_vst3!(DeepSteps);
