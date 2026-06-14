@@ -63,9 +63,75 @@ pub fn steps_in_range(start_beat: f64, end_beat: f64, _seq_len: usize) -> Vec<i6
     out
 }
 
+pub const PULSES_PER_BEAT: f64 = 48.0; // 48 PPQN (NOTES-sequencer.md §1 line 82, §6).
+
+/// Substep value in [0,1] -> timing offset in beats.
+/// offset = substep_scale * (2*substep - 1) pulses, / 48 PPQN. substep 0.5 -> 0.
+/// `substep_scale` is the substep-scale slider in pulses (range 0..6 per NOTES §3
+/// lines 133,145–146; `expr $f1*($f2-$f3)+$f3` with ±S bounds).
+///
+/// NOTE (VERIFY in Task 16, NOTES §3 line 141 / §6 "Needs A/B"): the Pd patch
+/// truncates this offset to whole pulses (`int`) and matches a discrete clock pulse.
+/// We use a continuous beat offset instead — an intentional approximation that
+/// host-transport timing affords; to be A/B-checked later.
+pub fn substep_offset_beats(substep: f64, substep_scale: f64) -> f64 {
+    substep_scale * (2.0 * substep - 1.0) / PULSES_PER_BEAT
+}
+
+pub struct StepEvent {
+    pub note: i32,
+    pub vel: u8,
+    pub on_beat: f64,
+    pub gate_ms: f64, // absolute ms; audio layer converts to a NoteOff sample offset (Task 13).
+}
+
+/// Schedule one active step: apply the substep timing offset to the step onset,
+/// carry the note, fixed velocity (100, NOTES §5 line 207), and absolute gate (ms,
+/// NOTES §5 lines 222–224). Mirrors the Pd patch (substep lerp + Gate-Length slider).
+pub fn schedule_step(
+    step_onset_beat: f64,
+    substep: f64,
+    substep_scale: f64,
+    gate_ms: f64,
+    note: i32,
+    vel: u8,
+) -> StepEvent {
+    StepEvent {
+        note,
+        vel,
+        on_beat: step_onset_beat + substep_offset_beats(substep, substep_scale),
+        gate_ms,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn substep_offset_is_zero_on_grid() {
+        assert!((substep_offset_beats(0.5, 6.0)).abs() < 1e-12);
+    }
+    #[test]
+    fn substep_offset_scales_and_signs() {
+        // S=6 pulses, substep 1.0 -> +6 pulses = +6/48 beat = +0.125
+        assert!((substep_offset_beats(1.0, 6.0) - 0.125).abs() < 1e-12);
+        // substep 0.0 -> -6 pulses = -0.125
+        assert!((substep_offset_beats(0.0, 6.0) + 0.125).abs() < 1e-12);
+        // S=4, substep 0.75 -> 4*(0.5)=2 pulses = 2/48
+        assert!((substep_offset_beats(0.75, 4.0) - (2.0 / 48.0)).abs() < 1e-12);
+    }
+    #[test]
+    fn schedule_applies_offset_and_carries_gate_ms() {
+        let ev = schedule_step(1.0, 0.5, 6.0, 100.0, 60, 100);
+        assert_eq!(ev.note, 60);
+        assert_eq!(ev.vel, 100);
+        assert!((ev.on_beat - 1.0).abs() < 1e-12); // substep 0.5 -> no offset
+        assert_eq!(ev.gate_ms, 100.0);
+        // off-grid substep shifts on_beat
+        let ev2 = schedule_step(1.0, 1.0, 6.0, 50.0, 64, 100);
+        assert!((ev2.on_beat - 1.125).abs() < 1e-12);
+    }
 
     #[test]
     fn snaps_pitch_class_down_to_scale_member() {
