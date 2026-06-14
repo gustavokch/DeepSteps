@@ -88,7 +88,14 @@ impl Plugin for DeepSteps {
     // the bundled `midi_inverter` example at this rev.
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[];
 
-    const MIDI_INPUT: MidiConfig = MidiConfig::None;
+    // Accept note input (Basic) as well as output. The process loop currently
+    // ignores incoming events, but a coherent note IO config is required: host
+    // MIDI CC -> latent mapping is a planned feature, and clap-validator 0.3.2
+    // has a bug where its output-note-port query passes `is_input=true`
+    // (src/plugin/ext/note_ports.rs:115), so an output-only note config makes
+    // the note-ports query fail. Advertising an input port makes the query
+    // succeed legitimately and matches the bundled `midi_inverter` example.
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::Basic;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
