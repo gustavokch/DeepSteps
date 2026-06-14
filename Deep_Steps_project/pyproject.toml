@@ -4,8 +4,14 @@ version = "0.1.0"
 description = "Embedded-Python runtime deps for DeepSteps (numpy + python-osc), uv-managed"
 requires-python = ">=3.14"
 dependencies = [
+    "librosa>=0.11.0",
     "mido>=1.3.3",
     "numpy",
     "python-osc",
     "python-rtmidi>=1.5.8",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
 ]
