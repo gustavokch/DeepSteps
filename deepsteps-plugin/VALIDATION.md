@@ -28,7 +28,11 @@ directly. Then:
 4. **Expect:** a stream of note-on/note-off in `aseqdump`, advancing 4 steps per beat
    (16 per bar), velocity 100, channel 1.
 5. Turn the **latent A–D** params — the pattern (which steps fire) should change.
-6. Turn **key** / **scale** — pitches should shift / re-quantize (snap-down).
+6. Turn **key** / **scale** — pitches should shift / re-quantize (snap-down). The
+   **scale** dropdown has 14 options: Chromatic, Pentatonic Major, Pentatonic Minor
+   (the original Pd patch's three), plus Stage-2 additions Major, Natural Minor,
+   Harmonic Minor, Melodic Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian,
+   Blues, Whole Tone. Every scale snaps each pitch DOWN to the nearest scale member.
 7. **seq length** < 16 should shorten the loop; **gate** should change note lengths;
    **substep** > 0 should nudge note timing off the grid.
 8. Press **Stop** — no hung notes (all pending note-offs flush).
