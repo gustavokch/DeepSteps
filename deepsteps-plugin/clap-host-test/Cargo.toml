@@ -1,0 +1,20 @@
+# Standalone CLAP host harness that dlopens the SHIPPED deepsteps-plugin.clap and
+# verifies per-scale note quantization in a real host process() loop. Detached from
+# the plugin workspace (own [workspace] table) so it never gets pulled into the
+# plugin's `cargo test`. Pinned to the SAME clap-sys git rev the plugin links, so
+# the C-ABI struct layouts are guaranteed to match.
+[package]
+name = "clap-host-test"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+libloading = "0.8"
+clap-sys = { git = "https://github.com/micahrj/clap-sys.git", rev = "25d7f53fdb6363ad63fbd80049cb7a42a97ac156" }
+
+[[bin]]
+name = "scale-test"
+path = "src/main.rs"

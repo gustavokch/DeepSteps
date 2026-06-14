@@ -12,6 +12,12 @@ A/B — the Stage 1 X11 app).
 - **clap-validator** — `clap-validator validate target/bundled/deepsteps-plugin.clap`
   → **18 passed, 0 failed, 3 skipped**. The 3 skips are `preset-discovery-*`
   (not implemented; expected for a MIDI plugin).
+- **Host-level scale test** — `clap-host-test/` is a headless CLAP host that dlopens
+  the **shipped** `.clap`, drives a playing transport for each of the 14 scales, and
+  asserts every emitted NoteOn pitch is in-scale (pitch class ∈ scale table) and
+  equals the reference snap-down. `cd clap-host-test && cargo run --release` →
+  **ALL 14 SCALES PASS**. This validates the real artifact (CLAP ABI + nih-plug
+  wrapper + sequencer/quantizer), not just the in-crate unit tests.
 
 ## 2. Carla smoke test (manual)
 
