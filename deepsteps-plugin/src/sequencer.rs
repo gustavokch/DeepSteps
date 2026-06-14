@@ -38,6 +38,31 @@ pub fn quantize(note: i32, scale: Scale, key: i32) -> i32 {
     octave + snapped + key
 }
 
+/// Steps per beat: 16 steps fill a 4-beat bar (NOTES-sequencer.md: `mod 192` = 16*12 pulses).
+pub const STEPS_PER_BEAT: f64 = 4.0;
+/// One step is 0.25 beat.
+pub const STEP_BEATS: f64 = 1.0 / STEPS_PER_BEAT;
+
+/// Wrapped step index (0..seq_len) currently sounding at `beat`.
+pub fn step_at_beat(beat: f64, seq_len: usize) -> usize {
+    let idx = (beat * STEPS_PER_BEAT).floor() as i64;
+    idx.rem_euclid(seq_len as i64) as usize
+}
+
+/// Absolute (pre-wrap) step indices whose onset (`index * STEP_BEATS`) lies in the
+/// half-open interval `[start_beat, end_beat)`. The caller wraps via `step_at_beat`
+/// or `% seq_len`. Onsets are exact 0.25-beat multiples, so plain ceil/compare is exact.
+pub fn steps_in_range(start_beat: f64, end_beat: f64, _seq_len: usize) -> Vec<i64> {
+    let first = (start_beat / STEP_BEATS).ceil() as i64;
+    let mut out = Vec::new();
+    let mut s = first;
+    while (s as f64) * STEP_BEATS < end_beat {
+        out.push(s);
+        s += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,5 +94,28 @@ mod tests {
         assert_eq!(quantize(65, Scale::PentMajor, 0), 64);
         assert_eq!(quantize(66, Scale::PentMajor, 0), 64);
         assert_eq!(quantize(71, Scale::PentMajor, 0), 69);
+    }
+
+    #[test]
+    fn steps_per_beat_and_boundary_crossing() {
+        // 4 steps per beat; step = 0.25 beat. Block [0.0, 0.30) contains step onsets at 0.0 and 0.25.
+        assert_eq!(steps_in_range(0.0, 0.30, 16), vec![0, 1]);
+    }
+
+    #[test]
+    fn step_index_wraps_mod_seq_length() {
+        assert_eq!(step_at_beat(4.25, 16), 1); // 4.25 beats = 17th step -> mod 16 = 1
+    }
+
+    #[test]
+    fn range_is_half_open() {
+        // a step onset exactly at end is excluded; exactly at start is included
+        assert_eq!(steps_in_range(0.0, 0.25, 16), vec![0]); // 0.25 excluded
+        assert_eq!(steps_in_range(0.25, 0.50, 16), vec![1]); // 0.25 included, 0.50 excluded
+    }
+
+    #[test]
+    fn empty_when_no_boundary_in_range() {
+        assert_eq!(steps_in_range(0.05, 0.24, 16), Vec::<i64>::new());
     }
 }
