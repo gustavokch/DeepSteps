@@ -19,7 +19,7 @@ blog post [here](https://mct-master.github.io/masters-thesis/2024/05/14/alexanjw
 | Stage | What | State |
 |-------|------|-------|
 | **Stage 1** | Original openFrameworks standalone, building/running on Linux x86_64 (runtime only — offline training UI disabled) | Builds & runs on CachyOS/Arch with gcc 16 + openFrameworks 0.12.1. See [`docs/BUILDING-linux.md`](docs/BUILDING-linux.md). |
-| **Stage 2** | Rust rewrite as a CLAP + VST3 **MIDI-generator** plugin (nih-plug). Reuses no C++/Pd/Python at runtime. | Working. 14 cargo + 8 pytest tests, clippy clean, `clap-validator` 18/0/3, and a headless CLAP host test passing all 14 scales. CI green. |
+| **Stage 2** | Rust rewrite as a CLAP + VST3 **MIDI-generator** plugin (nih-plug). Reuses no C++/Pd/Python at runtime. | Working. 16 cargo + 8 pytest tests, clippy clean, `clap-validator` 18/0/3, `pluginval` (VST3) SUCCESS, and headless CLAP + VST3 host tests passing all 14 scales. CI green. |
 
 The two stages share no runtime code. Stage 1 is the behavioural reference; Stage 2
 is the plugin you actually install in a DAW.
@@ -49,12 +49,12 @@ Output: NoteOn/NoteOff, velocity 100, MIDI channel 1.
 
 ### Plugin — from a release
 
-Download `deepsteps-plugin-v0.1-linux-x86_64.zip` from
+Download `deepsteps-plugin-v0.1.1-linux-x86_64.zip` from
 [Releases](https://github.com/gustavokch/DeepSteps/releases), then:
 
 ```bash
 mkdir -p ~/.clap ~/.vst3
-unzip deepsteps-plugin-v0.1-linux-x86_64.zip
+unzip deepsteps-plugin-v0.1.1-linux-x86_64.zip
 cp    deepsteps-plugin.clap  ~/.clap/
 cp -r deepsteps-plugin.vst3  ~/.vst3/
 ```
@@ -96,10 +96,11 @@ clock and sequences off **incoming MIDI clock**.
 - **Shipped weights are from a synthetic dataset.** The original never shipped trained
   weights (it random-inits and only becomes meaningful after in-session training).
   This port freezes an **offline-trained** decoder, but the committed
-  `weights/decoder.json` was trained on a deterministic *synthetic* corpus
-  (`tools/make_synth_dataset.py`), so patterns are reproducible but not musically
-  trained. Train your own from audio with `tools/build_dataset.py` +
-  `tools/train_export.py` (uses [librosa](https://librosa.org) for onset detection).
+  `deepsteps-plugin/weights/decoder.json` was trained on a deterministic *synthetic*
+  corpus (`Deep_Steps_project/tools/make_synth_dataset.py`), so patterns are
+  reproducible but not musically trained. Train your own from audio with
+  `Deep_Steps_project/tools/build_dataset.py` + `Deep_Steps_project/tools/train_export.py`
+  (uses [librosa](https://librosa.org) for onset detection).
 - **Two sequencer timing approximations** (flagged for A/B in
   [`deepsteps-plugin/NOTES-sequencer.md`](deepsteps-plugin/NOTES-sequencer.md) and
   [`VALIDATION.md`](deepsteps-plugin/VALIDATION.md)): the sub-step offset uses a
@@ -110,7 +111,7 @@ clock and sequences off **incoming MIDI clock**.
 ## Validation
 
 See [`deepsteps-plugin/VALIDATION.md`](deepsteps-plugin/VALIDATION.md). Automated:
-`cargo test` (14), `clap-validator` (18/0/3) and `pluginval` (VST3, strictness 8,
+`cargo test` (16), `clap-validator` (18/0/3) and `pluginval` (VST3, strictness 8,
 SUCCESS), plus headless host scale tests that load the **shipped** binaries and assert
 all 14 scales quantise correctly through both plugin formats — `clap-host-test/` (CLAP)
 and `vst3-host-test/` (VST3). All run in CI on every push/PR.
