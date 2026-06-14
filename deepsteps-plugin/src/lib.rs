@@ -176,7 +176,6 @@ impl Plugin for DeepSteps {
         let substep_scale = self.params.substep_scale.value() as f64;
         let scale = Self::map_scale(self.params.scale.value());
         let key = self.params.key.value();
-        let dur_samples = (gate_ms / 1000.0 * self.sample_rate as f64).round() as i64;
 
         for abs_step in steps_in_range(pos_beats, block_end, seq_len) {
             let idx = abs_step.rem_euclid(seq_len as i64) as usize;
@@ -194,6 +193,9 @@ impl Plugin for DeepSteps {
                 note as i32,
                 100,
             );
+
+            // NoteOff duration sourced from the scheduled event's gate_ms.
+            let dur_samples = (ev.gate_ms / 1000.0 * self.sample_rate as f64).round() as i64;
 
             // NoteOn sample offset within this block, clamped into range.
             let on_smp = (((ev.on_beat - pos_beats) / beats_per_sample).round() as i64)

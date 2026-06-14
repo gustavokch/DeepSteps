@@ -26,7 +26,7 @@ impl Scale {
 /// Mirrors the Pd patch (NOTES-sequencer.md §4: snap pitch class DOWN, keep octave,
 /// then add key 0..11; chromatic = identity + key).
 pub fn quantize(note: i32, scale: Scale, key: i32) -> i32 {
-    let pc = ((note % 12) + 12) % 12;
+    let pc = note.rem_euclid(12);
     let octave = note - pc;
     let table = scale.table();
     let snapped = table
