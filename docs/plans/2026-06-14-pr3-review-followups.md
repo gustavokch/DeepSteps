@@ -5,7 +5,9 @@ Plan to address findings from the PR #3 review
 PR is merged; these are follow-up fixes on `main`. Ordered by priority.
 
 **Status:** items 1-6 done and pushed to `main` (commits `bab0bce`, `110578b`,
-`23b1b38`); item 7 (manual GUI render) still open. `cargo test` 16 pass,
+`23b1b38`). Item 7: VST3 render in Carla confirmed (screenshot in `docs/img/`);
+interactive click/playhead + headless snapshot test still open, plus a new
+oversized-host-window observation logged below. `cargo test` 16 pass,
 `cargo build --release` warning-clean.
 
 ## 1. Clean stale scaffolding in `src/params.rs` — Medium ✅ (bab0bce)
@@ -48,13 +50,26 @@ no rescale is pending.
 - [x] `editor.rs`: "4 columns" → "4 step columns" (grid is `num_columns(8)`).
 - [x] No `600×640` figure remained in tracked docs.
 
-## 7. Real verification gap — manual GUI render — Medium (process, not code)
+## 7. Real verification gap — manual GUI render — Medium (process, not code) ✅ render confirmed
 The PR shipped without a manual Carla render ("not yet done, pending reviewer check").
 
-- [ ] Load the bundled CLAP/VST3 in Carla; confirm the grid draws, cells toggle on
-      click, and the playhead tracks during host playback. Capture a screenshot.
+- [x] Loaded the VST3 in Carla (`carla-single native vst3`) on a live display;
+      grid, all panels, and param values render correctly. Screenshot:
+      [`docs/img/stage3-egui-carla-render.png`](../img/stage3-egui-carla-render.png).
+      (Carla has no CLAP support on this box; CLAP render unverified but shares the
+      same egui editor code path.)
+- [ ] Still unverified interactively: click-to-toggle a cell, and playhead tracking
+      during host playback (standalone load has no running transport).
 - [ ] If feasible, add a headless egui render/snapshot smoke test so this isn't
       manual-only going forward.
+
+### New observation from the render
+- **Host window oversized vs editor.** Carla opens the plugin window far larger than
+  the 600×520 `EguiState`; the egui content sits top-left and the rest is black (see
+  screenshot). The egui layout itself is fine — the VST3 wrapper isn't reporting/
+  constraining the host window to the `EguiState` size. Worth a follow-up: confirm
+  whether `EguiState::from_size` is honored by the nih-plug VST3 wrapper at this rev,
+  or whether the window needs an explicit resize request.
 
 ## Suggested batching
 - One commit: items 1 + 3 + 6 (params.rs cleanup, all doc/comment).
