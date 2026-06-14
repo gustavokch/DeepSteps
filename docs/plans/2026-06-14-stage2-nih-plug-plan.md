@@ -20,27 +20,32 @@ Work in `Deep_Steps_project/` (existing uv project). Add offline-only deps there
 
 ### Task 1: Add offline deps
 
+> **Note:** Original plan used `aubio` for onset detection, but `aubio` 0.4.9
+> fails to build against NumPy on Python 3.14 (old ufunc `npy_intp *` signature,
+> fatal under gcc16). Swapped to **librosa** (pure-Python + scipy, installs
+> cleanly, audio-faithful onset detection). aubio is gone from the whole plan.
+
 **Files:**
 - Modify: `Deep_Steps_project/pyproject.toml`
 
-**Step 1: Add aubio + a dev test runner**
+**Step 1: Add librosa + a dev test runner**
 
 ```bash
 cd Deep_Steps_project
-uv add aubio
+uv add librosa
 uv add --dev pytest
 ```
 
 **Step 2: Verify import**
 
-Run: `uv run python -c "import aubio, numpy; print(aubio.version)"`
-Expected: prints an aubio version, no traceback.
+Run: `uv run python -c "import librosa, numpy; print(librosa.__version__)"`
+Expected: prints a librosa version, no traceback.
 
 **Step 3: Commit**
 
 ```bash
 git add Deep_Steps_project/pyproject.toml Deep_Steps_project/uv.lock
-git commit -m "Stage 2: add aubio + pytest for offline weight-export pipeline"
+git commit -m "Stage 2: add librosa + pytest for offline weight-export pipeline"
 ```
 
 ---
@@ -161,11 +166,11 @@ git commit -m "Stage 2: extract tested corpus onset->32dim encoder"
 
 ---
 
-### Task 3: Audio-corpus → dataset builder (aubio wrapper)
+### Task 3: Audio-corpus → dataset builder (librosa wrapper)
 
-Thin I/O layer: for each audio file, aubio onsets → `encode_onsets` → row. Kept
-thin because aubio-on-real-audio is not deterministically unit-tested; the math it
-calls is already covered by Task 2.
+Thin I/O layer: for each audio file, librosa onsets → `encode_onsets` → row. Kept
+thin because onset-detection-on-real-audio is not deterministically unit-tested; the
+math it calls is already covered by Task 2.
 
 **Files:**
 - Create: `Deep_Steps_project/tools/build_dataset.py`
@@ -194,25 +199,17 @@ Expected: FAIL — module/function missing.
 
 ```python
 # build_dataset.py
-import sys, glob, numpy as np, aubio
+import sys, glob, numpy as np, librosa
 from corpus_encode import encode_onsets
 
 def rows_to_dataset(rows):
     return np.vstack(rows)
 
-def onsets_for_file(path, hop=512, method="default"):
-    src = aubio.source(path, 0, hop)          # native samplerate, mono-mix
-    sr = src.samplerate
-    o = aubio.onset(method, 2048, hop, sr)
-    times, total = [], 0
-    while True:
-        samples, read = src()
-        if o(samples):
-            times.append(o.get_last())
-        total += read
-        if read < hop:
-            break
-    return np.array(times), total
+def onsets_for_file(path):
+    """Return (onset sample positions, total length in samples) for one audio file."""
+    y, sr = librosa.load(path, sr=None, mono=True)     # native samplerate
+    onsets = librosa.onset.onset_detect(y=y, sr=sr, units="samples")
+    return np.asarray(onsets), len(y)
 
 def build(corpus_glob):
     rows = []
