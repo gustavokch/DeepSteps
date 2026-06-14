@@ -182,6 +182,33 @@ Per branch (minor branch shown, locals 1,29,2,3,6,5,7,8,4):
 
 The chromatic branch (`sel 0..11`) always matches → offset 0 → note passes unchanged.
 
+### Stage-2 addition: extra scales (not in the Pd patch)
+The Pd patch ships only the three scales above. The Rust port (commit `59afbc5`)
+keeps those three and adds 11 more, using the **same snap-down rule** (snap pitch
+class to the nearest scale member at or below it, keep octave, add key). Each table
+is sorted ascending from 0, so `sequencer::quantize` is unchanged — only the table set
+grows. Full set (14), with semitone tables:
+
+| scale | pitch classes |
+|-------|---------------|
+| Chromatic | 0 1 2 3 4 5 6 7 8 9 10 11 |
+| Pentatonic Major | 0 2 4 7 9 |
+| Pentatonic Minor | 0 3 5 7 10 |
+| Major (Ionian) | 0 2 4 5 7 9 11 |
+| Natural Minor (Aeolian) | 0 2 3 5 7 8 10 |
+| Harmonic Minor | 0 2 3 5 7 8 11 |
+| Melodic Minor | 0 2 3 5 7 9 11 |
+| Dorian | 0 2 3 5 7 9 10 |
+| Phrygian | 0 1 3 5 7 8 10 |
+| Lydian | 0 2 4 6 7 9 11 |
+| Mixolydian | 0 2 4 5 7 9 10 |
+| Locrian | 0 1 3 5 6 8 10 |
+| Blues | 0 3 5 6 7 10 |
+| Whole Tone | 0 2 4 6 8 10 |
+
+To add another: edit `Scale` enum + `table()` (`src/sequencer.rs`), `ScaleParam` enum
+(`src/params.rs`), and `map_scale` (`src/lib.rs`). Keep the table ascending from 0.
+
 ### Key offset
 `r key`(local 28) ← `s key`(idx 101) ← `vradio 0..11`(idx 100, "Quantised Key", C..B,
 lines 582–591). `key` → `sel 0..11`(26) → one of `msg 0..11`(13–25,27) → `+`(12) right
