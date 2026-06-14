@@ -40,7 +40,8 @@ jobs:
             ~/.cargo/git
             deepsteps-plugin/target
             deepsteps-plugin/clap-host-test/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('deepsteps-plugin/Cargo.toml', 'deepsteps-plugin/clap-host-test/Cargo.toml') }}
+            deepsteps-plugin/vst3-host-test/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('deepsteps-plugin/Cargo.toml', 'deepsteps-plugin/clap-host-test/Cargo.toml', 'deepsteps-plugin/vst3-host-test/Cargo.toml') }}
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Unit tests
@@ -55,6 +56,20 @@ jobs:
       # Headless CLAP host: dlopen the freshly built .clap and assert all 14 scales
       # quantize correctly. Detached workspace, so run it from its own dir; its
       # default .clap path resolves to ../target/bundled/deepsteps-plugin.clap.
-      - name: Host-level scale test
+      - name: Host-level scale test (CLAP)
         working-directory: deepsteps-plugin/clap-host-test
         run: cargo run --release
+
+      # Same 14-scale assertion through a headless VST3 COM host.
+      - name: Host-level scale test (VST3)
+        working-directory: deepsteps-plugin/vst3-host-test
+        run: cargo run --release
+
+      # VST3 host-conformance via Tracktion pluginval (params, buses, state, fuzz).
+      - name: pluginval (VST3 conformance)
+        run: |
+          curl -fsSL -o /tmp/pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip
+          unzip -o -q /tmp/pluginval.zip -d /tmp/pluginval
+          /tmp/pluginval/pluginval --strictness-level 8 \
+            --validate target/bundled/deepsteps-plugin.vst3

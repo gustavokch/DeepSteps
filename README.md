@@ -101,14 +101,14 @@ clock and sequences off **incoming MIDI clock**.
   continuous beat offset vs the Pd patch's integer-pulse (48 PPQN) truncation; and a
   step landing exactly on a process-block boundary could in principle double/drop.
   Neither has been observed; both want a host A/B check.
-- **VST3 is built but only the CLAP is validator-/host-tested** so far.
 
 ## Validation
 
 See [`deepsteps-plugin/VALIDATION.md`](deepsteps-plugin/VALIDATION.md). Automated:
-`cargo test` (14), `clap-validator` (18/0/3), and `clap-host-test/` — a headless CLAP
-host that loads the **shipped** `.clap` and asserts all 14 scales quantise correctly.
-All run in CI on every push/PR.
+`cargo test` (14), `clap-validator` (18/0/3) and `pluginval` (VST3, strictness 8,
+SUCCESS), plus headless host scale tests that load the **shipped** binaries and assert
+all 14 scales quantise correctly through both plugin formats — `clap-host-test/` (CLAP)
+and `vst3-host-test/` (VST3). All run in CI on every push/PR.
 
 ## Original macOS build
 

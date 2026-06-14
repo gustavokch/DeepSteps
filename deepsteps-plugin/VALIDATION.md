@@ -6,18 +6,28 @@ A/B — the Stage 1 X11 app).
 
 ## 1. Automated (done)
 
-- **cargo test** — `cd deepsteps-plugin && cargo test` → 12 passing.
+- **cargo test** — `cd deepsteps-plugin && cargo test` → 14 passing.
   - Decoder forward pass matches the Python reference vectors to ~1e-16.
   - Sequencer: scale quantize (snap-down), beat→step mapping, substep offset, gate.
 - **clap-validator** — `clap-validator validate target/bundled/deepsteps-plugin.clap`
   → **18 passed, 0 failed, 3 skipped**. The 3 skips are `preset-discovery-*`
   (not implemented; expected for a MIDI plugin).
-- **Host-level scale test** — `clap-host-test/` is a headless CLAP host that dlopens
-  the **shipped** `.clap`, drives a playing transport for each of the 14 scales, and
-  asserts every emitted NoteOn pitch is in-scale (pitch class ∈ scale table) and
-  equals the reference snap-down. `cd clap-host-test && cargo run --release` →
-  **ALL 14 SCALES PASS**. This validates the real artifact (CLAP ABI + nih-plug
-  wrapper + sequencer/quantizer), not just the in-crate unit tests.
+- **pluginval (VST3)** — `pluginval --strictness-level 8 --validate
+  target/bundled/deepsteps-plugin.vst3` → **SUCCESS** (25 test groups, 0 failures:
+  param thread-safety, buses, state, parameter fuzz, …). Host-level conformance of
+  the VST3 build.
+- **Host-level scale test (CLAP)** — `clap-host-test/` is a headless CLAP host that
+  dlopens the **shipped** `.clap`, drives a playing transport for each of the 14
+  scales, and asserts every emitted NoteOn pitch is in-scale (pitch class ∈ scale
+  table) and equals the reference snap-down. `cd clap-host-test && cargo run --release`
+  → **ALL 14 SCALES PASS**. Validates the real artifact (CLAP ABI + nih-plug wrapper +
+  sequencer/quantizer), not just the in-crate unit tests.
+- **Host-level scale test (VST3)** — `vst3-host-test/` is the same check through a
+  headless **VST3** COM host (loads the shipped `.vst3`, sets params via
+  `IParameterChanges`, drives a playing `ProcessContext`, collects `NoteOnEvent`s).
+  `cd vst3-host-test && cargo run --release` → **ALL 14 SCALES PASS**. Confirms the
+  VST3 wrapper's ABI / param mapping / event output, identical results to the CLAP
+  path.
 
 ## 2. Carla smoke test (manual)
 
