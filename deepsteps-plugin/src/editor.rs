@@ -37,6 +37,17 @@ pub fn create(
                 ctx.request_repaint();
             }
 
+            // Scale text with the window so the UI stays readable at any size.
+            // Derived from the window's logical width (`EguiState`, independent of
+            // the styling so there's no feedback loop), floored at 1.0 so text is
+            // never smaller than the baseline. We scale font sizes rather than the
+            // egui zoom factor on purpose: zoom changes points-per-pixel, which
+            // would desync `ResizableWindow`'s drag-corner math (it measures in
+            // points but the wrapper resizes in pixels). Keeping zoom at 1 means
+            // points == pixels, so the resize corner stays correct.
+            let scale = (state.params.editor_state.size().0 as f32 / 540.0).clamp(1.0, 1.8);
+            apply_text_scale(ctx, scale);
+
             // ResizableWindow adds a drag corner; dragging publishes a new size
             // via `request_resize`, so the host window tracks the editor and the
             // egui surface fills it (no black margins). Min size keeps every panel
@@ -56,25 +67,25 @@ pub fn create(
                     egui::CollapsingHeader::new("Latent")
                         .default_open(true)
                         .show(ui, |ui| {
-                            labeled(ui, "A", |ui| ui.add(ParamSlider::for_param(&p.latent_a, setter)));
-                            labeled(ui, "B", |ui| ui.add(ParamSlider::for_param(&p.latent_b, setter)));
-                            labeled(ui, "C", |ui| ui.add(ParamSlider::for_param(&p.latent_c, setter)));
-                            labeled(ui, "D", |ui| ui.add(ParamSlider::for_param(&p.latent_d, setter)));
+                            labeled(ui, scale, "A", |ui| ui.add(ParamSlider::for_param(&p.latent_a, setter)));
+                            labeled(ui, scale, "B", |ui| ui.add(ParamSlider::for_param(&p.latent_b, setter)));
+                            labeled(ui, scale, "C", |ui| ui.add(ParamSlider::for_param(&p.latent_c, setter)));
+                            labeled(ui, scale, "D", |ui| ui.add(ParamSlider::for_param(&p.latent_d, setter)));
                         });
 
                     egui::CollapsingHeader::new("Timing")
                         .default_open(true)
                         .show(ui, |ui| {
-                            labeled(ui, "Gate", |ui| ui.add(ParamSlider::for_param(&p.gate, setter)));
-                            labeled(ui, "Substep", |ui| ui.add(ParamSlider::for_param(&p.substep_scale, setter)));
-                            labeled(ui, "Seq Len", |ui| ui.add(ParamSlider::for_param(&p.seq_len, setter)));
+                            labeled(ui, scale, "Gate", |ui| ui.add(ParamSlider::for_param(&p.gate, setter)));
+                            labeled(ui, scale, "Substep", |ui| ui.add(ParamSlider::for_param(&p.substep_scale, setter)));
+                            labeled(ui, scale, "Seq Len", |ui| ui.add(ParamSlider::for_param(&p.seq_len, setter)));
                         });
 
                     egui::CollapsingHeader::new("Tuning")
                         .default_open(true)
                         .show(ui, |ui| {
-                            labeled(ui, "Key", |ui| ui.add(ParamSlider::for_param(&p.key, setter)));
-                            labeled(ui, "Scale", |ui| ui.add(ParamSlider::for_param(&p.scale, setter)));
+                            labeled(ui, scale, "Key", |ui| ui.add(ParamSlider::for_param(&p.key, setter)));
+                            labeled(ui, scale, "Scale", |ui| ui.add(ParamSlider::for_param(&p.scale, setter)));
                         });
 
                     egui::CollapsingHeader::new("Pitches")
@@ -90,7 +101,7 @@ pub fn create(
                                 for (i, note) in p.notes.iter().enumerate() {
                                     ui.label(format!("{:>2}", i + 1));
                                     ui.add_sized(
-                                        [slider_w, 18.0],
+                                        [slider_w, 18.0 * scale],
                                         ParamSlider::for_param(&note.pitch, setter),
                                     );
                                     if i % cols == cols - 1 {
@@ -105,12 +116,39 @@ pub fn create(
     )
 }
 
-/// One labelled row: fixed-width label + the widget.
-fn labeled(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> egui::Response) {
+/// One labelled row: fixed-width label + the widget. Label box and row height
+/// scale with `scale` so they keep pace with the scaled font size.
+fn labeled(ui: &mut egui::Ui, scale: f32, label: &str, add: impl FnOnce(&mut egui::Ui) -> egui::Response) {
     ui.horizontal(|ui| {
-        ui.add_sized([64.0, 18.0], egui::Label::new(label));
+        ui.add_sized([64.0 * scale, 18.0 * scale], egui::Label::new(label));
         add(ui);
     });
+}
+
+/// Rewrite the context's text styles to `scale`× a fixed baseline every frame.
+/// Sizes are set absolutely (not multiplied in place) so repeated frames don't
+/// compound. Font scaling is used instead of `Context::set_zoom_factor` so the
+/// point/pixel ratio stays 1:1 and `ResizableWindow`'s drag corner keeps working.
+fn apply_text_scale(ctx: &egui::Context, scale: f32) {
+    use egui::{FontFamily::{Monospace, Proportional}, FontId, TextStyle};
+    let styles = [
+        (TextStyle::Small, FontId::new(9.0 * scale, Proportional)),
+        (TextStyle::Body, FontId::new(14.0 * scale, Proportional)),
+        (TextStyle::Button, FontId::new(14.0 * scale, Proportional)),
+        (TextStyle::Heading, FontId::new(20.0 * scale, Proportional)),
+        (TextStyle::Monospace, FontId::new(13.0 * scale, Monospace)),
+    ];
+    // Only restyle when the size actually changed (set_style triggers a relayout).
+    let target: f32 = 14.0 * scale;
+    let current = ctx
+        .style()
+        .text_styles
+        .get(&TextStyle::Body)
+        .map(|f| f.size)
+        .unwrap_or(0.0);
+    if (current - target).abs() > 0.01 {
+        ctx.style_mut(|s| s.text_styles = styles.into_iter().collect());
+    }
 }
 
 /// Draw the 16-step grid: filled cell = step on, red outline = playhead. A click
