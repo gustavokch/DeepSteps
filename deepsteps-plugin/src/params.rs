@@ -1,15 +1,15 @@
 //! nih-plug parameter definitions for the DeepSteps plugin.
 //!
 //! Mirrors the Stage-1 ofxGui widgets (see `Deep_Steps_project/src/ofApp.cpp`)
-//! and `NOTES-sequencer.md`. The struct is not wired into a plugin yet
-//! (Task 13/14); `dead_code` is therefore expected until then.
-#![allow(dead_code)]
+//! and `NOTES-sequencer.md`. Wired into the plugin via `lib.rs` (`params()` and
+//! `editor()`).
 
 use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
 use std::sync::Arc;
 
-/// Default editor window size, matching the Stage-1 openFrameworks canvas.
+/// Default editor window size (compact layout; shrunk from the Stage-1 canvas in
+/// commit c42a1ff to fit the collapsed-grid pitch panel).
 pub const EDITOR_WIDTH: u32 = 600;
 pub const EDITOR_HEIGHT: u32 = 520;
 
@@ -126,10 +126,10 @@ pub struct DeepStepsParams {
 
 impl Default for DeepStepsParams {
     fn default() -> Self {
-        // The latent params share an identical definition. Plan spec: range
-        // 0.0..1.0, default 0.5 (the decoder expects normalised latents; the
-        // Stage-1 GUI sliders used -10..10/default 0, but the plugin normalises
-        // here and Task 13 will rescale as needed).
+        // The latent params share an identical definition. Range 0.0..1.0,
+        // default 0.5: the decoder's training domain is normalised — the shipped
+        // `reference_vectors.json` latents all fall in 0.028..0.981 — so this
+        // range matches the decoder directly, no rescaling needed.
         let latent = |name: &'static str| {
             FloatParam::new(name, 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
         };
@@ -161,8 +161,3 @@ impl Default for DeepStepsParams {
         }
     }
 }
-
-/// Marker to silence the unused-`Arc` import if this module is compiled before
-/// the plugin wraps the params in an `Arc` (Task 13).
-#[allow(dead_code)]
-type _ParamsArc = Arc<DeepStepsParams>;
