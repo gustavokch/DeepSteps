@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [linux-port, stage2-nih-plug, main]
+  pull_request:
+
+# Stage 2 nih-plug plugin: build the CLAP/VST3 bundle and verify it in a real host.
+jobs:
+  plugin:
+    name: deepsteps-plugin (build + host test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deepsteps-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      # nih-plug's documented Linux build dependencies.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libgl-dev libjack-jackd2-dev \
+            libx11-xcb-dev libxcb1-dev libxcb-icccm4-dev \
+            libxcursor-dev libxkbcommon-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # Cache cargo registry + git deps + build artifacts. Keyed on the lockfiles so
+      # the cache busts when dependencies change.
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            deepsteps-plugin/target
+            deepsteps-plugin/clap-host-test/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('deepsteps-plugin/Cargo.toml', 'deepsteps-plugin/clap-host-test/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Unit tests
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build CLAP/VST3 bundle
+        run: cargo xtask bundle deepsteps-plugin --release
+
+      # Headless CLAP host: dlopen the freshly built .clap and assert all 14 scales
+      # quantize correctly. Detached workspace, so run it from its own dir; its
+      # default .clap path resolves to ../target/bundled/deepsteps-plugin.clap.
+      - name: Host-level scale test
+        working-directory: deepsteps-plugin/clap-host-test
+        run: cargo run --release
