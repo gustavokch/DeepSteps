@@ -12,7 +12,7 @@ use nih_plug::prelude::Editor;
 use nih_plug_egui::{create_egui_editor, egui, widgets::ParamSlider};
 
 use crate::params::DeepStepsParams;
-use crate::shared::SharedState;
+use crate::shared::{SharedState, NO_STEP};
 
 /// State handed to every egui frame.
 struct EditorState {
@@ -30,8 +30,12 @@ pub fn create(
         EditorState { params, shared },
         |_ctx, _state| {},
         |ctx, setter, state| {
-            // Keep the playhead animating while the transport plays.
-            ctx.request_repaint();
+            // Keep the playhead animating while the transport plays. When stopped
+            // (current == NO_STEP) let egui idle instead of spinning at full
+            // framerate — a grid click still triggers its own repaint.
+            if state.shared.current() != NO_STEP {
+                ctx.request_repaint();
+            }
 
             egui::CentralPanel::default().show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -70,8 +74,8 @@ pub fn create(
                     egui::CollapsingHeader::new("Pitches")
                         .default_open(true)
                         .show(ui, |ui| {
-                            // 4 columns of (label + slider) => 4 rows of 4 steps,
-                            // keeping the 16 pitches compact.
+                            // 4 step columns (8 grid columns = 4 label+slider
+                            // pairs) => 4 rows of 4 steps, keeping 16 compact.
                             egui::Grid::new("pitch-grid").num_columns(8).show(ui, |ui| {
                                 for (i, note) in p.notes.iter().enumerate() {
                                     ui.label(format!("{:>2}", i + 1));
