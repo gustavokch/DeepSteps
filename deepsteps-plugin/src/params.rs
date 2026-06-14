@@ -22,6 +22,39 @@ pub enum ScaleParam {
     #[id = "pentmin"]
     #[name = "Pentatonic Minor"]
     PentMinor,
+    #[id = "major"]
+    #[name = "Major"]
+    Major,
+    #[id = "natmin"]
+    #[name = "Natural Minor"]
+    NatMinor,
+    #[id = "harmmin"]
+    #[name = "Harmonic Minor"]
+    HarmMinor,
+    #[id = "melmin"]
+    #[name = "Melodic Minor"]
+    MelMinor,
+    #[id = "dorian"]
+    #[name = "Dorian"]
+    Dorian,
+    #[id = "phrygian"]
+    #[name = "Phrygian"]
+    Phrygian,
+    #[id = "lydian"]
+    #[name = "Lydian"]
+    Lydian,
+    #[id = "mixolydian"]
+    #[name = "Mixolydian"]
+    Mixolydian,
+    #[id = "locrian"]
+    #[name = "Locrian"]
+    Locrian,
+    #[id = "blues"]
+    #[name = "Blues"]
+    Blues,
+    #[id = "wholetone"]
+    #[name = "Whole Tone"]
+    WholeTone,
 }
 
 /// A single sequencer step's note pitch. Used as an array of 16 nested params so

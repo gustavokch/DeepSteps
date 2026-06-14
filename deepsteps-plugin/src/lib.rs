@@ -56,6 +56,17 @@ impl DeepSteps {
             ScaleParam::Chromatic => Scale::Chromatic,
             ScaleParam::PentMajor => Scale::PentMajor,
             ScaleParam::PentMinor => Scale::PentMinor,
+            ScaleParam::Major => Scale::Major,
+            ScaleParam::NatMinor => Scale::NatMinor,
+            ScaleParam::HarmMinor => Scale::HarmMinor,
+            ScaleParam::MelMinor => Scale::MelMinor,
+            ScaleParam::Dorian => Scale::Dorian,
+            ScaleParam::Phrygian => Scale::Phrygian,
+            ScaleParam::Lydian => Scale::Lydian,
+            ScaleParam::Mixolydian => Scale::Mixolydian,
+            ScaleParam::Locrian => Scale::Locrian,
+            ScaleParam::Blues => Scale::Blues,
+            ScaleParam::WholeTone => Scale::WholeTone,
         }
     }
 

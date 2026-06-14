@@ -2,13 +2,26 @@
 //!
 //! Mirrors the Pd `pd quant` subpatch. See `NOTES-sequencer.md` §4.
 
-/// Scale selector for pitch quantization. Order/tables match the Pd `sel` boxes
-/// in `pd quant` (NOTES-sequencer.md §4).
+/// Scale selector for pitch quantization. The first three (Chromatic, PentMajor,
+/// PentMinor) match the Pd `sel` boxes in `pd quant` (NOTES-sequencer.md §4); the
+/// rest are Stage-2 additions (standard modes + blues/whole-tone/harmonic/melodic
+/// minor). Every table is sorted ascending so `quantize` can snap DOWN.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Scale {
     Chromatic,
     PentMajor,
     PentMinor,
+    Major,
+    NatMinor,
+    HarmMinor,
+    MelMinor,
+    Dorian,
+    Phrygian,
+    Lydian,
+    Mixolydian,
+    Locrian,
+    Blues,
+    WholeTone,
 }
 
 impl Scale {
@@ -17,6 +30,17 @@ impl Scale {
             Scale::Chromatic => &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
             Scale::PentMajor => &[0, 2, 4, 7, 9],
             Scale::PentMinor => &[0, 3, 5, 7, 10],
+            Scale::Major => &[0, 2, 4, 5, 7, 9, 11],
+            Scale::NatMinor => &[0, 2, 3, 5, 7, 8, 10],
+            Scale::HarmMinor => &[0, 2, 3, 5, 7, 8, 11],
+            Scale::MelMinor => &[0, 2, 3, 5, 7, 9, 11],
+            Scale::Dorian => &[0, 2, 3, 5, 7, 9, 10],
+            Scale::Phrygian => &[0, 1, 3, 5, 7, 8, 10],
+            Scale::Lydian => &[0, 2, 4, 6, 7, 9, 11],
+            Scale::Mixolydian => &[0, 2, 4, 5, 7, 9, 10],
+            Scale::Locrian => &[0, 1, 3, 5, 6, 8, 10],
+            Scale::Blues => &[0, 3, 5, 6, 7, 10],
+            Scale::WholeTone => &[0, 2, 4, 6, 8, 10],
         }
     }
 }
@@ -140,6 +164,44 @@ mod tests {
         assert_eq!(quantize(62, Scale::PentMinor, 0), 60); // pc2 -> down to 0
         assert_eq!(quantize(64, Scale::PentMinor, 0), 63); // pc4 -> down to 3
         assert_eq!(quantize(71, Scale::PentMinor, 0), 70); // pc11 -> down to 10
+    }
+
+    #[test]
+    fn new_scales_snap_down() {
+        // Major [0,2,4,5,7,9,11]: pc6 -> 5, pc1 -> 0
+        assert_eq!(quantize(66, Scale::Major, 0), 65);
+        assert_eq!(quantize(61, Scale::Major, 0), 60);
+        // Natural minor [0,2,3,5,7,8,10]: pc4 -> 3, pc11 -> 10
+        assert_eq!(quantize(64, Scale::NatMinor, 0), 63);
+        assert_eq!(quantize(71, Scale::NatMinor, 0), 70);
+        // Dorian [0,2,3,5,7,9,10]: pc1 -> 0, pc11 -> 10
+        assert_eq!(quantize(61, Scale::Dorian, 0), 60);
+        assert_eq!(quantize(71, Scale::Dorian, 0), 70);
+        // Blues [0,3,5,6,7,10]: pc4 -> 3, pc9 -> 7
+        assert_eq!(quantize(64, Scale::Blues, 0), 63);
+        assert_eq!(quantize(69, Scale::Blues, 0), 67);
+        // Whole tone [0,2,4,6,8,10]: pc1 -> 0, pc11 -> 10
+        assert_eq!(quantize(61, Scale::WholeTone, 0), 60);
+        assert_eq!(quantize(71, Scale::WholeTone, 0), 70);
+        // Harmonic minor [0,2,3,5,7,8,11]: pc10 -> 8
+        assert_eq!(quantize(70, Scale::HarmMinor, 0), 68);
+    }
+
+    #[test]
+    fn all_scale_tables_sorted_and_valid() {
+        // snap-DOWN quantize requires each table ascending, in [0,11], starting at 0.
+        let scales = [
+            Scale::Chromatic, Scale::PentMajor, Scale::PentMinor, Scale::Major,
+            Scale::NatMinor, Scale::HarmMinor, Scale::MelMinor, Scale::Dorian,
+            Scale::Phrygian, Scale::Lydian, Scale::Mixolydian, Scale::Locrian,
+            Scale::Blues, Scale::WholeTone,
+        ];
+        for s in scales {
+            let t = s.table();
+            assert_eq!(t[0], 0, "{s:?} must start at 0");
+            assert!(t.windows(2).all(|w| w[0] < w[1]), "{s:?} must be strictly ascending");
+            assert!(t.iter().all(|&d| (0..12).contains(&d)), "{s:?} entries in 0..12");
+        }
     }
 
     #[test]
