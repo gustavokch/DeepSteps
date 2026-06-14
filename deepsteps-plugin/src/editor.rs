@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use nih_plug::prelude::Editor;
-use nih_plug_egui::{create_egui_editor, egui, widgets::ParamSlider};
+use nih_plug_egui::{create_egui_editor, egui, resizable_window::ResizableWindow, widgets::ParamSlider};
 
 use crate::params::DeepStepsParams;
 use crate::shared::{SharedState, NO_STEP};
@@ -37,7 +37,13 @@ pub fn create(
                 ctx.request_repaint();
             }
 
-            egui::CentralPanel::default().show(ctx, |ui| {
+            // ResizableWindow adds a drag corner; dragging publishes a new size
+            // via `request_resize`, so the host window tracks the editor and the
+            // egui surface fills it (no black margins). Min size keeps every panel
+            // reachable. Replaces a bare CentralPanel, which couldn't resize.
+            ResizableWindow::new("ds-resize")
+                .min_size(egui::vec2(360.0, 280.0))
+                .show(ctx, &state.params.editor_state, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.heading("DeepSteps");
                     ui.add_space(4.0);
@@ -74,16 +80,20 @@ pub fn create(
                     egui::CollapsingHeader::new("Pitches")
                         .default_open(true)
                         .show(ui, |ui| {
-                            // 4 step columns (8 grid columns = 4 label+slider
-                            // pairs) => 4 rows of 4 steps, keeping 16 compact.
-                            egui::Grid::new("pitch-grid").num_columns(8).show(ui, |ui| {
+                            // Reflow the 16 pitch sliders to the window width: each
+                            // step is a label + slider pair (~150px), so the column
+                            // count grows/shrinks with `available_width`.
+                            let avail = ui.available_width();
+                            let cols = ((avail / 150.0).floor() as usize).clamp(1, 8);
+                            let slider_w = (avail / cols as f32 - 34.0).clamp(60.0, 160.0);
+                            egui::Grid::new("pitch-grid").num_columns(cols * 2).show(ui, |ui| {
                                 for (i, note) in p.notes.iter().enumerate() {
                                     ui.label(format!("{:>2}", i + 1));
                                     ui.add_sized(
-                                        [90.0, 18.0],
+                                        [slider_w, 18.0],
                                         ParamSlider::for_param(&note.pitch, setter),
                                     );
-                                    if i % 4 == 3 {
+                                    if i % cols == cols - 1 {
                                         ui.end_row();
                                     }
                                 }
@@ -107,9 +117,11 @@ fn labeled(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> eg
 /// on a cell toggles it (overriding the decoder until the next regeneration).
 fn step_grid(ui: &mut egui::Ui, shared: &SharedState) {
     const N: usize = 16;
-    let avail = ui.available_width().min(576.0);
+    // Use the full available width so the grid widens with the window; cell size
+    // is still clamped so cells never get tiny or absurdly large.
+    let avail = ui.available_width();
     let gap = 4.0;
-    let cell = ((avail - gap * (N as f32 - 1.0)) / N as f32).clamp(12.0, 32.0);
+    let cell = ((avail - gap * (N as f32 - 1.0)) / N as f32).clamp(12.0, 40.0);
 
     let (resp, painter) = ui.allocate_painter(
         egui::vec2(N as f32 * cell + (N as f32 - 1.0) * gap, cell),
