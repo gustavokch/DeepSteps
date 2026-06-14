@@ -68,13 +68,20 @@ pub fn create(
                         });
 
                     egui::CollapsingHeader::new("Pitches")
-                        .default_open(false)
+                        .default_open(true)
                         .show(ui, |ui| {
-                            egui::Grid::new("pitch-grid").num_columns(2).show(ui, |ui| {
+                            // 4 columns of (label + slider) => 4 rows of 4 steps,
+                            // keeping the 16 pitches compact.
+                            egui::Grid::new("pitch-grid").num_columns(8).show(ui, |ui| {
                                 for (i, note) in p.notes.iter().enumerate() {
                                     ui.label(format!("{:>2}", i + 1));
-                                    ui.add(ParamSlider::for_param(&note.pitch, setter));
-                                    ui.end_row();
+                                    ui.add_sized(
+                                        [90.0, 18.0],
+                                        ParamSlider::for_param(&note.pitch, setter),
+                                    );
+                                    if i % 4 == 3 {
+                                        ui.end_row();
+                                    }
                                 }
                             });
                         });

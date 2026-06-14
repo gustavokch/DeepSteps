@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 /// Default editor window size, matching the Stage-1 openFrameworks canvas.
 pub const EDITOR_WIDTH: u32 = 600;
-pub const EDITOR_HEIGHT: u32 = 640;
+pub const EDITOR_HEIGHT: u32 = 520;
 
 /// Sequencer scale, mirroring `sequencer::Scale` (Task 9). Kept separate so the
 /// nih-plug `Enum` derive (host automation IDs/names) stays decoupled from the
