@@ -32,8 +32,10 @@ impl Default for SharedState {
 }
 
 impl SharedState {
-    /// Whether step `i` (0..16) is currently on.
+    /// Whether step `i` is currently on. `i` must be in `0..16` — `1 << i` on the
+    /// `u16` mask is unsound otherwise.
     pub fn get(&self, i: usize) -> bool {
+        debug_assert!(i < 16, "step index {i} out of range 0..16");
         self.steps.load(Ordering::Relaxed) & (1 << i) != 0
     }
 
@@ -47,9 +49,10 @@ impl SharedState {
         self.steps.load(Ordering::Relaxed)
     }
 
-    /// Flip step `i` (0..16) — used by a user grid click. Persists until the next
-    /// regeneration overwrites the mask.
+    /// Flip step `i` — used by a user grid click. `i` must be in `0..16`.
+    /// Persists until the next regeneration overwrites the mask.
     pub fn toggle(&self, i: usize) {
+        debug_assert!(i < 16, "step index {i} out of range 0..16");
         self.steps.fetch_xor(1 << i, Ordering::Relaxed);
     }
 

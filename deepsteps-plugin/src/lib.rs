@@ -206,7 +206,10 @@ impl Plugin for DeepSteps {
         for abs_step in steps_in_range(pos_beats, block_end, seq_len) {
             let idx = abs_step.rem_euclid(seq_len as i64) as usize;
             // Publish the playhead so the editor highlights the active step,
-            // whether or not this step is on.
+            // whether or not this step is on. Last-write-wins within a block: if a
+            // block spans multiple steps the editor only sees the final one. Fine
+            // at normal block sizes (<=1 step/block at 16 steps/bar); revisit if a
+            // host uses very large blocks.
             self.shared.set_current(idx);
             if !self.shared.get(idx) {
                 continue;
