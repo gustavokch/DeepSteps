@@ -6,7 +6,12 @@
 #![allow(dead_code)]
 
 use nih_plug::prelude::*;
+use nih_plug_egui::EguiState;
 use std::sync::Arc;
+
+/// Default editor window size, matching the Stage-1 openFrameworks canvas.
+pub const EDITOR_WIDTH: u32 = 600;
+pub const EDITOR_HEIGHT: u32 = 640;
 
 /// Sequencer scale, mirroring `sequencer::Scale` (Task 9). Kept separate so the
 /// nih-plug `Enum` derive (host automation IDs/names) stays decoupled from the
@@ -80,6 +85,10 @@ impl Default for NoteParam {
 /// Top-level plugin parameters.
 #[derive(Params)]
 pub struct DeepStepsParams {
+    /// Persisted egui editor state (remembers the window size across sessions).
+    #[persist = "editor-state"]
+    pub editor_state: Arc<EguiState>,
+
     /// Latent dimension A driving the decoder (later host-MIDI-CC-mappable).
     #[id = "latentA"]
     pub latent_a: FloatParam,
@@ -126,6 +135,8 @@ impl Default for DeepStepsParams {
         };
 
         Self {
+            editor_state: EguiState::from_size(EDITOR_WIDTH, EDITOR_HEIGHT),
+
             latent_a: latent("Latent A"),
             latent_b: latent("Latent B"),
             latent_c: latent("Latent C"),

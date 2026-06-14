@@ -35,7 +35,11 @@ parameters into a 16-step pattern (which steps fire + a per-step "groove" sub-st
 offset). The sequencer plays that pattern at 4 steps/beat (16 per bar), quantising
 each step's pitch to a selected scale + key.
 
-**Parameters** (host-generic UI, no custom editor yet): Latent A–D, Gate length (ms),
+**Custom GUI** (egui editor): a 16-step grid with a live playhead and click-to-toggle
+cells (a click forces a step on/off, overriding the decoder until the next latent-driven
+regeneration), plus sliders for the latent vector, per-step pitches, timing, and tuning.
+
+**Parameters** (also host-automatable): Latent A–D, Gate length (ms),
 Sub-step scale, Sequence length (1–16), Key (0–11), Scale (14 options: Chromatic,
 Pentatonic Major/Minor, Major, Natural/Harmonic/Melodic Minor, Dorian, Phrygian,
 Lydian, Mixolydian, Locrian, Blues, Whole Tone), and 16 per-step note pitches.
@@ -86,8 +90,9 @@ clock and sequences off **incoming MIDI clock**.
 
 ## Known issues / pending
 
-- **No custom GUI.** The plugin is parameters-only; the host draws a generic control
-  panel. The original's 16-step visual editor is not yet ported.
+- **Step toggles are not preset-persisted.** Grid clicks override the decoder at
+  runtime but are not saved in presets (they are runtime state, not params) and a
+  latent move regenerates over them. Promoting them to params is a possible later pass.
 - **Shipped weights are from a synthetic dataset.** The original never shipped trained
   weights (it random-inits and only becomes meaningful after in-session training).
   This port freezes an **offline-trained** decoder, but the committed

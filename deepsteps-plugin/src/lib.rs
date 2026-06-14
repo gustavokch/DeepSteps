@@ -1,6 +1,8 @@
 pub mod decoder;
+pub mod editor;
 pub mod params;
 pub mod sequencer;
+pub mod shared;
 
 use nih_plug::prelude::*;
 use std::sync::Arc;
@@ -8,6 +10,7 @@ use std::sync::Arc;
 use decoder::Decoder;
 use params::{DeepStepsParams, ScaleParam};
 use sequencer::{quantize, schedule_step, steps_in_range, Scale, STEP_BEATS};
+use shared::{pack, SharedState, NO_STEP};
 
 /// A NoteOff scheduled to fire in a future process block. `remaining` is the
 /// sample count from the *current* block's start until the NoteOff should fire;
@@ -23,8 +26,12 @@ struct DeepSteps {
     /// Last latent vector that produced `steps`/`substeps`. Initialised to NaN so
     /// the first `maybe_regen` always regenerates (NaN != anything).
     last_latent: [f64; 4],
-    steps: [bool; 16],
+    /// Per-step timing offsets from the decoder (not exposed in the GUI). The
+    /// on/off pattern itself lives in `shared.steps` so the editor can read and
+    /// toggle it.
     substeps: [f64; 16],
+    /// Audio<->GUI shared state: step on/off mask + playhead index.
+    shared: Arc<SharedState>,
     pending: Vec<PendingOff>,
     sample_rate: f32,
 }
@@ -42,8 +49,8 @@ impl Default for DeepSteps {
             params: Arc::new(DeepStepsParams::default()),
             decoder,
             last_latent: [f64::NAN; 4],
-            steps: [false; 16],
             substeps: [0.0; 16],
+            shared: Arc::new(SharedState::default()),
             pending: Vec::new(),
             sample_rate: 44100.0,
         }
@@ -81,7 +88,10 @@ impl DeepSteps {
         ];
         if z != self.last_latent {
             let (s, ss) = self.decoder.generate(&z);
-            self.steps = s;
+            // Publish the freshly-decoded pattern as the playback source of
+            // truth. This overwrites any user grid toggles — moving a latent
+            // regenerates, which is the intended generative behaviour.
+            self.shared.set_mask(pack(&s));
             self.substeps = ss;
             self.last_latent = z;
         }
@@ -117,6 +127,10 @@ impl Plugin for DeepSteps {
         self.params.clone()
     }
 
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        editor::create(self.params.clone(), self.shared.clone())
+    }
+
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
@@ -140,6 +154,7 @@ impl Plugin for DeepSteps {
 
         // Not playing: flush any pending NoteOffs so notes don't hang, then bail.
         if !transport.playing {
+            self.shared.set_current(NO_STEP);
             for po in self.pending.drain(..) {
                 context.send_event(NoteEvent::NoteOff {
                     timing: 0,
@@ -190,7 +205,10 @@ impl Plugin for DeepSteps {
 
         for abs_step in steps_in_range(pos_beats, block_end, seq_len) {
             let idx = abs_step.rem_euclid(seq_len as i64) as usize;
-            if !self.steps[idx] {
+            // Publish the playhead so the editor highlights the active step,
+            // whether or not this step is on.
+            self.shared.set_current(idx);
+            if !self.shared.get(idx) {
                 continue;
             }
             let onset_beat = abs_step as f64 * STEP_BEATS;
