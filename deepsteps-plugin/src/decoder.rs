@@ -4,6 +4,7 @@ use serde::Deserialize;
 #[serde(tag = "op")]
 enum Op {
     #[serde(rename = "dense")]
+    #[allow(non_snake_case)]
     Dense { W: Vec<Vec<f64>>, b: Vec<Vec<f64>> },
     #[serde(rename = "relu")]
     Relu,
@@ -27,6 +28,9 @@ pub struct Decoder {
 }
 
 impl Decoder {
+    /// Parses the decoder weights JSON. This is a build-time-trusted artifact
+    /// baked in via `include_str!`, so the forward pass intentionally does not
+    /// bounds-check: a malformed file is a build error, not runtime input.
     pub fn from_json_str(s: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(s)
     }
