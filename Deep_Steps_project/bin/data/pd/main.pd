@@ -562,7 +562,7 @@
 #N canvas 121 146 450 300 oscin 0;
 #X obj 59 85 netreceive -u -b;
 #X obj 59 120 oscparse;
-#X msg 58 38 listen 9000;
+#X msg 58 38 listen 9051;
 #X obj 59 156 list trim;
 #X msg 163 64 listen 0;
 #X obj 59 7 loadbang;

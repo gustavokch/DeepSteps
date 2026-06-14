@@ -413,7 +413,7 @@ onsets = []
 
 # Set up OSC client
 ip_address = '127.0.0.1'  # Change this to the IP address of your OSC receiver
-port = 9000  # Change this to the port number of your OSC receiver
+port = 9051  # Change this to the port number of your OSC receiver
 client = udp_client.SimpleUDPClient(ip_address, port)
         
     

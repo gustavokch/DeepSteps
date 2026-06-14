@@ -8,7 +8,11 @@
 #   The location of your root openFrameworks installation
 #       (default) OF_ROOT = ../../.. 
 ################################################################################
-OF_ROOT = /Users/alexwastnidge/Desktop/openFrameworks
+OF_ROOT = $(HOME)/of_v0.12.1_linux64_gcc6_release
+
+# Embedded Python (Very High Level Embedding) — Linux
+PROJECT_CFLAGS = $(shell python3-config --includes)
+PROJECT_LDFLAGS = $(shell python3-config --embed --ldflags)
 
 ################################################################################
 # PROJECT ROOT

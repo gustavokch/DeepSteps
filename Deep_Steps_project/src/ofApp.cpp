@@ -30,9 +30,8 @@
  */
 #include "ofApp.h"
 
-#include <Python/Python.h>
-
-#include <aubio/aubio.h>
+#include <Python.h>
+// aubio removed: offline corpus/dataset build disabled in Linux runtime-only build
 
 
 //--------------------------------------------------------------
@@ -70,7 +69,7 @@ void ofApp::setup() {
     FILE* file = fopen(scriptPath, "r");
     if (file == NULL) {
         fprintf(stderr, "Failed to open the script file\n");
-        return 1;
+        return;
     }
     int result = PyRun_SimpleFile(file, scriptPath);
 
@@ -80,7 +79,7 @@ void ofApp::setup() {
     // Check the result of running the script
     if (result != 0) {
         fprintf(stderr, "Failed to run the script\n");
-        return 1;
+        return;
     }
     
 
@@ -344,7 +343,7 @@ void ofApp::draw() {
     ofSetColor(ofColor::seaGreen);
     ofDrawRectangle(startButton);
     
-    ofSetColor(ofColor::darkorange);
+    ofSetColor(ofColor::darkOrange);
     ofDrawRectangle(openCorpus);
     
     ofSetColor(ofColor::darkGrey);
@@ -733,8 +732,8 @@ void ofApp::exit() {
 	// cleanup
 	ofSoundStreamStop();
     
-    PyRun_SimpleString("server.server_close()");
-    
+    // (removed server.server_close(): AE_init.py uses a udp_client sender, no OSC server object exists)
+
     // Finalize the Python interpreter
     Py_Finalize();
     
@@ -768,7 +767,7 @@ void ofApp::mousePressed(int x, int y, int button){
         // Get the path to the 'corpus' folder inside the 'data' folder
         string corpusFolderPath = resourcesPath + "/corpus";
 
-        string command = "open \"" + corpusFolderPath + "\"";
+        string command = "xdg-open \"" + corpusFolderPath + "\" &";
         system(command.c_str());
         
         
@@ -776,7 +775,8 @@ void ofApp::mousePressed(int x, int y, int button){
     
     
     if (startButton.inside(x, y)) {
-
+        aeStatus = "Dataset build disabled (Linux runtime-only build)";
+#if 0 // aubio corpus/dataset build excluded on Linux
         aeStatus = "Making dataset...";
         // Get the path to the 'corpus' folder inside the 'data' folder
         string corpusFolderPath = resourcesPath + "/corpus";
@@ -851,7 +851,7 @@ void ofApp::mousePressed(int x, int y, int button){
             FILE* file = fopen(scriptPath, "r");
             if (file == NULL) {
                 fprintf(stderr, "Failed to open the script file\n");
-                return 1;
+                return;
             }
             int result = PyRun_SimpleFile(file, scriptPath);
 
@@ -861,7 +861,7 @@ void ofApp::mousePressed(int x, int y, int button){
             // Check the result of running the script
             if (result != 0) {
                 fprintf(stderr, "Failed to run the script\n");
-                return 1;
+                return;
 
             }
 
@@ -871,6 +871,7 @@ void ofApp::mousePressed(int x, int y, int button){
         PyRun_SimpleString("print(dataset.shape)");
         PyRun_SimpleString("np.savetxt('dataset.csv', dataset, delimiter=',')");
         aeStatus = "Dataset Ready";
+#endif // aubio block
 }
     
     if (trainButton.inside(x, y)) {
@@ -890,7 +891,7 @@ void ofApp::mousePressed(int x, int y, int button){
         FILE* file = fopen(scriptPath, "r");
         if (file == NULL) {
             fprintf(stderr, "Failed to open the script file\n");
-            return 1;
+            return;
         }
         int result = PyRun_SimpleFile(file, scriptPath);
         
@@ -900,7 +901,7 @@ void ofApp::mousePressed(int x, int y, int button){
         // Check the result of running the script
         if (result != 0) {
             fprintf(stderr, "Failed to run the script\n");
-            return 1;
+            return;
         }
         
         aeStatus = "Model trained - Ready";
