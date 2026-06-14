@@ -4,54 +4,49 @@ Plan to address findings from the PR #3 review
 (<https://github.com/gustavokch/DeepSteps/pull/3#issuecomment-4702798431>).
 PR is merged; these are follow-up fixes on `main`. Ordered by priority.
 
-## 1. Clean stale scaffolding in `src/params.rs` — Medium
+**Status:** items 1-6 done and pushed to `main` (commits `bab0bce`, `110578b`,
+`23b1b38`); item 7 (manual GUI render) still open. `cargo test` 16 pass,
+`cargo build --release` warning-clean.
+
+## 1. Clean stale scaffolding in `src/params.rs` — Medium ✅ (bab0bce)
 The params struct is now wired into the plugin, so the "not yet wired" scaffolding
 is obsolete and the blanket `allow(dead_code)` masks real dead code.
 
-- [ ] Remove `#![allow(dead_code)]` (line 6). Rebuild; fix or `#[allow]` each
-      genuinely-unused item the compiler then flags (narrow, not blanket).
-- [ ] Rewrite the module doc (lines 4-6) — drop "not wired into a plugin yet
-      (Task 13/14)". Describe what the module is now.
-- [ ] Delete the `_ParamsArc` marker type + comment (lines 165-168) and the
-      "silence the unused-`Arc` import" note — `Arc<EguiState>` is a live field.
-- [ ] `cargo build --release` + `cargo clippy` clean.
+- [x] Remove `#![allow(dead_code)]` — build stays warning-clean, no dead items.
+- [x] Rewrite the module doc — drop "not wired into a plugin yet (Task 13/14)".
+- [x] Delete the `_ParamsArc` marker type + comment and the unused-`Arc` note.
+- [x] `cargo build --release` clean.
 
-## 2. Stop unconditional repaint in `src/editor.rs` — Low/Medium
+## 2. Stop unconditional repaint in `src/editor.rs` — Low/Medium ✅ (110578b)
 `ctx.request_repaint()` spins the GUI at full framerate even when stopped.
 
-- [ ] Only request a repaint while the transport is playing:
-      `if state.shared.current() != NO_STEP { ctx.request_repaint(); }`
-      (import `NO_STEP` from `crate::shared`).
+- [x] Gate the repaint on `shared.current() != NO_STEP` (`NO_STEP` imported).
 - [ ] Manually confirm the playhead still animates during playback and the
-      editor goes idle when stopped.
+      editor goes idle when stopped. *(covered by item 7 GUI render)*
 
-## 3. Fix misleading latent-range comment in `src/params.rs` — Low
+## 3. Fix misleading latent-range comment in `src/params.rs` — Low ✅ (bab0bce)
 Reference latents are all in `0.028..0.981`, so `0.0..1.0`/default 0.5 is correct;
 no rescale is pending.
 
-- [ ] Reword the `latent` closure comment (lines ~129-135): the range matches the
-      decoder's training domain (verified against `reference_vectors.json`); remove
-      the "-10..10 … Task 13 will rescale" claim.
+- [x] Reworded the `latent` closure comment: range matches the decoder's training
+      domain (verified against `reference_vectors.json`); "-10..10 … rescale" gone.
 
-## 4. Guard public bit-index API in `src/shared.rs` — Low
+## 4. Guard public bit-index API in `src/shared.rs` — Low ✅ (23b1b38)
 `get`/`toggle` are `pub`; `1 << i` is unsound for `i >= 16`.
 
-- [ ] Add `debug_assert!(i < 16)` to `get` and `toggle`, or document the
-      `0..16` invariant on both.
+- [x] Added `debug_assert!(i < 16)` to `get` and `toggle` documenting the
+      `0..16` invariant.
 
-## 5. Note playhead last-write-wins in `src/lib.rs` — Low
+## 5. Note playhead last-write-wins in `src/lib.rs` — Low ✅ (23b1b38)
 `set_current(idx)` in the step loop only leaves the last step of a block visible.
 
-- [ ] Add a comment at `lib.rs:210` documenting the limitation, **or** publish the
-      playhead from wall-clock transport position instead of the step loop so it's
-      block-size-independent. Comment is sufficient for now.
+- [x] Added a comment at the `set_current` call documenting the last-write-wins
+      limitation (deferred the wall-clock rewrite — comment sufficient for now).
 
-## 6. Doc drift — Cosmetic
-- [ ] `params.rs:12`: reword the `EDITOR_HEIGHT`/canvas comment — current size is
-      600×520 (commit c42a1ff), not the Stage-1 canvas.
-- [ ] `editor.rs:73`: "4 columns" → "4 step columns" (grid is `num_columns(8)` =
-      4 label+slider pairs).
-- [ ] If kept anywhere, correct the `600×640` figure in docs to `600×520`.
+## 6. Doc drift — Cosmetic ✅ (bab0bce + 110578b)
+- [x] `params.rs`: reworded the `EDITOR_HEIGHT`/canvas comment — 600×520 (c42a1ff).
+- [x] `editor.rs`: "4 columns" → "4 step columns" (grid is `num_columns(8)`).
+- [x] No `600×640` figure remained in tracked docs.
 
 ## 7. Real verification gap — manual GUI render — Medium (process, not code)
 The PR shipped without a manual Carla render ("not yet done, pending reviewer check").
