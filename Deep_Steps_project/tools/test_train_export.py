@@ -8,6 +8,8 @@ def test_export_roundtrip_matches_python_decoder():
     ae = build_autoencoder()
     ae.autoencoder.fit(ds, ds, n_epochs=3, batch_size=16)
     export = export_decoder(ae)
+    import json
+    export = json.loads(json.dumps(export))   # validate the serialized artifact, not just the live dict
     # three random latents must match the live Python decoder within eps
     for _ in range(3):
         z = rng.random((1, 4))
