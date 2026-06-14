@@ -46,7 +46,7 @@ def encode_onsets(onsets, dur):
         if o < SIXTEENTHS_DIV:
             onehot[o] = 1
 
-    # substep = signed PPQN distance from nearest 16th, clamped [-6,6], -> (x+6)/12
+    # substep = signed PPQN distance from nearest 16th (NOT clamped -- original's if/else is a no-op) -> (ss+6)/12
     substeps = []
     nearest = [int(round(o / sixteenths)) * sixteenths for o in onsets]
     for f, c in zip(ppqn_onsets, nearest):
