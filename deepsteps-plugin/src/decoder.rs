@@ -35,6 +35,17 @@ impl Decoder {
         serde_json::from_str(s)
     }
 
+    /// Safe fallback decoder used when the baked-in weights fail to parse. With no
+    /// ops, `forward` returns the latent unchanged; `generate()`'s guarded indexing
+    /// then yields an all-off pattern (steps `false`, substeps `0.0`). Never panics.
+    pub fn empty() -> Self {
+        Decoder {
+            latent_dim: 4,
+            input_dim: 32,
+            ops: Vec::new(),
+        }
+    }
+
     pub fn forward(&self, latent: &[f64]) -> Vec<f64> {
         let mut x = latent.to_vec();
         for op in &self.ops {
@@ -76,8 +87,11 @@ impl Decoder {
         let mut steps = [false; 16];
         let mut substeps = [0.0; 16];
         for i in 0..16 {
-            steps[i] = out[i] > 0.5;
-            substeps[i] = out[16 + i];
+            // Guard indexing so a short output (e.g. the empty fallback decoder,
+            // whose forward returns the 4-element latent unchanged) yields all-off
+            // instead of panicking. Correct-path output is 32 elements, unchanged.
+            steps[i] = out.get(i).copied().unwrap_or(0.0) > 0.5;
+            substeps[i] = out.get(16 + i).copied().unwrap_or(0.0);
         }
         (steps, substeps)
     }

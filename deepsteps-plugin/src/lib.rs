@@ -1,3 +1,219 @@
 pub mod decoder;
 pub mod params;
 pub mod sequencer;
+
+use nih_plug::prelude::*;
+use std::sync::Arc;
+
+use decoder::Decoder;
+use params::{DeepStepsParams, ScaleParam};
+use sequencer::{quantize, schedule_step, steps_in_range, Scale, STEP_BEATS};
+
+/// A NoteOff scheduled to fire in a future process block. `remaining` is the
+/// sample count from the *current* block's start until the NoteOff should fire;
+/// it is decremented by `nframes` each block until it lands inside a block.
+struct PendingOff {
+    note: u8,
+    remaining: i64,
+}
+
+struct DeepSteps {
+    params: Arc<DeepStepsParams>,
+    decoder: Decoder,
+    /// Last latent vector that produced `steps`/`substeps`. Initialised to NaN so
+    /// the first `maybe_regen` always regenerates (NaN != anything).
+    last_latent: [f64; 4],
+    steps: [bool; 16],
+    substeps: [f64; 16],
+    pending: Vec<PendingOff>,
+    sample_rate: f32,
+}
+
+impl Default for DeepSteps {
+    fn default() -> Self {
+        let decoder = match Decoder::from_json_str(include_str!("../weights/decoder.json")) {
+            Ok(d) => d,
+            Err(e) => {
+                nih_log!("DeepSteps: bad weights, using empty decoder: {e}");
+                Decoder::empty()
+            }
+        };
+        Self {
+            params: Arc::new(DeepStepsParams::default()),
+            decoder,
+            last_latent: [f64::NAN; 4],
+            steps: [false; 16],
+            substeps: [0.0; 16],
+            pending: Vec::new(),
+            sample_rate: 44100.0,
+        }
+    }
+}
+
+impl DeepSteps {
+    fn map_scale(s: ScaleParam) -> Scale {
+        match s {
+            ScaleParam::Chromatic => Scale::Chromatic,
+            ScaleParam::PentMajor => Scale::PentMajor,
+            ScaleParam::PentMinor => Scale::PentMinor,
+        }
+    }
+
+    /// Re-run the decoder iff the latent params changed since last call.
+    fn maybe_regen(&mut self) {
+        let p = &self.params;
+        let z = [
+            p.latent_a.value() as f64,
+            p.latent_b.value() as f64,
+            p.latent_c.value() as f64,
+            p.latent_d.value() as f64,
+        ];
+        if z != self.last_latent {
+            let (s, ss) = self.decoder.generate(&z);
+            self.steps = s;
+            self.substeps = ss;
+            self.last_latent = z;
+        }
+    }
+}
+
+impl Plugin for DeepSteps {
+    const NAME: &'static str = "DeepSteps";
+    const VENDOR: &'static str = "DeepSteps";
+    const URL: &'static str = "https://github.com/gustavokch/DeepSteps";
+    const EMAIL: &'static str = "";
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+
+    // MIDI-only plugin: no audio I/O. An empty layout slice is the idiom used by
+    // the bundled `midi_inverter` example at this rev.
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[];
+
+    const MIDI_INPUT: MidiConfig = MidiConfig::None;
+    const MIDI_OUTPUT: MidiConfig = MidiConfig::Basic;
+    const SAMPLE_ACCURATE_AUTOMATION: bool = true;
+
+    type SysExMessage = ();
+    type BackgroundTask = ();
+
+    fn params(&self) -> Arc<dyn Params> {
+        self.params.clone()
+    }
+
+    fn initialize(
+        &mut self,
+        _audio_io_layout: &AudioIOLayout,
+        buffer_config: &BufferConfig,
+        _context: &mut impl InitContext<Self>,
+    ) -> bool {
+        self.sample_rate = buffer_config.sample_rate;
+        true
+    }
+
+    fn process(
+        &mut self,
+        buffer: &mut Buffer,
+        _aux: &mut AuxiliaryBuffers,
+        context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {
+        self.maybe_regen();
+
+        let nframes = buffer.samples() as i64;
+        let transport = context.transport();
+
+        // Not playing: flush any pending NoteOffs so notes don't hang, then bail.
+        if !transport.playing {
+            for po in self.pending.drain(..) {
+                context.send_event(NoteEvent::NoteOff {
+                    timing: 0,
+                    voice_id: None,
+                    channel: 0,
+                    note: po.note,
+                    velocity: 0.0,
+                });
+            }
+            return ProcessStatus::Normal;
+        }
+
+        // Need tempo + position to map beats to samples; otherwise stay silent.
+        let (tempo, pos_beats) = match (transport.tempo, transport.pos_beats()) {
+            (Some(tp), Some(pb)) => (tp, pb),
+            _ => return ProcessStatus::Normal,
+        };
+
+        // Drain pending NoteOffs (for notes started in earlier blocks) BEFORE
+        // stepping, so a same-block NoteOff can never precede its own NoteOn.
+        let mut still = Vec::with_capacity(self.pending.len());
+        for mut po in self.pending.drain(..) {
+            if po.remaining < nframes {
+                context.send_event(NoteEvent::NoteOff {
+                    timing: po.remaining.max(0) as u32,
+                    voice_id: None,
+                    channel: 0,
+                    note: po.note,
+                    velocity: 0.0,
+                });
+            } else {
+                po.remaining -= nframes;
+                still.push(po);
+            }
+        }
+        self.pending = still;
+
+        let beats_per_sample = tempo / 60.0 / self.sample_rate as f64;
+        let block_end = pos_beats + nframes as f64 * beats_per_sample;
+        let seq_len = self.params.seq_len.value() as usize;
+        let gate_ms = self.params.gate.value() as f64;
+        let substep_scale = self.params.substep_scale.value() as f64;
+        let scale = Self::map_scale(self.params.scale.value());
+        let key = self.params.key.value();
+        let dur_samples = (gate_ms / 1000.0 * self.sample_rate as f64).round() as i64;
+
+        for abs_step in steps_in_range(pos_beats, block_end, seq_len) {
+            let idx = abs_step.rem_euclid(seq_len as i64) as usize;
+            if !self.steps[idx] {
+                continue;
+            }
+            let onset_beat = abs_step as f64 * STEP_BEATS;
+            let raw = self.params.notes[idx].pitch.value();
+            let note = quantize(raw, scale, key).clamp(0, 127) as u8;
+            let ev = schedule_step(
+                onset_beat,
+                self.substeps[idx],
+                substep_scale,
+                gate_ms,
+                note as i32,
+                100,
+            );
+
+            // NoteOn sample offset within this block, clamped into range.
+            let on_smp = (((ev.on_beat - pos_beats) / beats_per_sample).round() as i64)
+                .clamp(0, nframes - 1);
+            context.send_event(NoteEvent::NoteOn {
+                timing: on_smp as u32,
+                voice_id: None,
+                channel: 0,
+                note,
+                velocity: ev.vel as f32 / 127.0,
+            });
+
+            // Matching NoteOff: emit now if it lands in this block, else defer.
+            let off_abs = on_smp + dur_samples;
+            if off_abs < nframes {
+                context.send_event(NoteEvent::NoteOff {
+                    timing: off_abs as u32,
+                    voice_id: None,
+                    channel: 0,
+                    note,
+                    velocity: 0.0,
+                });
+            } else {
+                self.pending.push(PendingOff {
+                    note,
+                    remaining: off_abs - nframes,
+                });
+            }
+        }
+
+        ProcessStatus::Normal
+    }
+}
