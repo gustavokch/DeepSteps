@@ -1,0 +1,26 @@
+# Standalone VST3 host harness that dlopens the SHIPPED deepsteps-plugin.vst3 and
+# verifies per-scale note quantization in a real host process() loop. Detached from
+# the plugin workspace (own [workspace] table) so it never gets pulled into the
+# plugin's `cargo test`. Pinned to the SAME vst3-sys git rev the plugin links, so
+# the COM/C-ABI struct layouts are guaranteed to match.
+[package]
+name = "vst3-host-test"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+libloading = "0.8"
+# Pinned by rev to the SAME commit nih-plug's `fix/drop-box-from-raw` branch resolves
+# to (see deepsteps-plugin/Cargo.lock) — cargo forbids branch+rev together, and rev is
+# the precise ABI pin we need.
+vst3-sys = { git = "https://github.com/robbert-vdh/vst3-sys.git", rev = "b3ff4d775940f5b476b9d1cca02a90e07e1922a2" }
+# The `#[VST3(...)]` co_class macro expands to code that names `vst3_com::` directly,
+# so the underlying com crate must be in scope (same git rev as vst3-sys).
+vst3-com = { git = "https://github.com/robbert-vdh/vst3-sys.git", rev = "b3ff4d775940f5b476b9d1cca02a90e07e1922a2" }
+
+[[bin]]
+name = "vst3-scale-test"
+path = "src/main.rs"
