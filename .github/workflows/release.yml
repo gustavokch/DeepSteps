@@ -1,0 +1,82 @@
+name: Release
+
+# Build the Linux CLAP + VST3 bundle and publish it.
+#   - Push a tag like `v0.1.2`  -> build, zip, create a GitHub Release with the
+#     zip attached (version taken from the tag).
+#   - Run manually (workflow_dispatch) -> build, zip, upload the zip as a run
+#     artifact (version taken from Cargo.toml; no Release, no tag needed).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed to create the GitHub Release on tag builds
+
+jobs:
+  release:
+    name: build + package (linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # nih-plug's documented Linux build dependencies (same set as CI).
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libgl-dev libjack-jackd2-dev \
+            libx11-xcb-dev libxcb1-dev libxcb-icccm4-dev \
+            libxcursor-dev libxkbcommon-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            zip
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build CLAP/VST3 bundle
+        working-directory: deepsteps-plugin
+        run: cargo xtask bundle deepsteps-plugin --release
+
+      # Version from the tag (strip the leading `v`) on tag builds, else from
+      # Cargo.toml for manual runs. Both refs are GitHub-controlled built-ins.
+      - name: Determine version
+        id: ver
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(grep -m1 '^version' deepsteps-plugin/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Zip the .clap and .vst3 bundle at the archive root, matching the existing
+      # release layout: deepsteps-plugin-v<version>-linux-x86_64.zip
+      - name: Package
+        id: pkg
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          NAME="deepsteps-plugin-v${VERSION}-linux-x86_64.zip"
+          ( cd deepsteps-plugin/target/bundled && \
+            zip -r "$NAME" deepsteps-plugin.clap deepsteps-plugin.vst3 )
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "path=deepsteps-plugin/target/bundled/$NAME" >> "$GITHUB_OUTPUT"
+
+      # Tag build -> GitHub Release with the zip attached.
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.pkg.outputs.path }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+
+      # Manual run -> just upload the zip as a downloadable run artifact.
+      - name: Upload artifact
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.name }}
+          path: ${{ steps.pkg.outputs.path }}
+          if-no-files-found: error
