@@ -71,6 +71,41 @@ The PR shipped without a manual Carla render ("not yet done, pending reviewer ch
   whether `EguiState::from_size` is honored by the nih-plug VST3 wrapper at this rev,
   or whether the window needs an explicit resize request.
 
+### Known issue: pluginval Editor test segfaults headless (fixed in CI)
+- **Symptom.** CI pluginval step crashed with `Segmentation fault (core dumped)`
+  right at `Starting tests in: pluginval / Editor...` (strictness 8). The earlier
+  `Open plugin (cold/warm)` tests passed, so the crash was in editor *paint*, not
+  creation.
+- **Root cause.** Not a plugin bug. pluginval's Editor test opens the egui editor,
+  which creates a real X11/GL window via baseview. CI ran pluginval with no
+  `DISPLAY`, so window creation derefs null → SIGSEGV. Confirmed by reproduction:
+  `xvfb-run pluginval … --strictness-level 8` → SUCCESS; `env -u DISPLAY
+  -u WAYLAND_DISPLAY pluginval …` → exit 139 (SIGSEGV) at the Editor test. The
+  resizable-window / text-scale commits are *not* implicated — they run fine with
+  a display.
+- **Resolution: `--skip-gui-tests`.** `.github/workflows/ci.yml` runs pluginval
+  with `--skip-gui-tests`; no display/GL needed. Verified locally: headless
+  `pluginval --strictness-level 8 --skip-gui-tests` → SUCCESS (exit 0). All
+  non-GUI conformance (params, buses, state, fuzz, threading) still runs. The
+  editor itself is verified manually in Carla (screenshot above).
+- **Why not headless GL (xvfb) — investigation trail.** Two attempts to give CI a
+  real GL stack both failed; recorded so nobody re-treads them:
+  1. **`xvfb` alone.** With a display the Editor test still aborted (exit 134):
+     `Could not fetch framebuffer config: CreationFailed(InvalidFBConfig)`
+     (`baseview/src/x11/visual_info.rs:30`), then a non-unwinding panic across the
+     C FFI boundary → `Aborted (core dumped)`.
+  2. **`xvfb` + `libgl1-mesa-dri` + `LIBGL_ALWAYS_SOFTWARE=1` + 24-bit GLX screen.**
+     Same `InvalidFBConfig`. CI logs confirmed the Mesa software stack (llvmpipe /
+     `mesa-libgallium`) *did* install — so "missing DRI driver" was not the cause.
+  - **Actual root cause.** baseview asks GLX (`glXChooseFBConfig`) for an RGBA
+    config. Client-side direct software rendering (llvmpipe/drisw) is what supplies
+    FBConfigs; it works on a dev box with a `/dev/dri` render node but the GHA
+    runner has none, so GLX falls back to the X server's *indirect* path. Modern
+    Mesa has dropped indirect/server-side software GLX, so the server advertises
+    GLX with **zero** FBConfigs → `InvalidFBConfig`. Reproduced locally by forcing
+    `LIBGL_ALWAYS_INDIRECT=1` (0 FBConfigs); confirmed `+iglx` does **not** help
+    (still 0). Not fixable without a GPU/DRM node on the runner — hence skip.
+
 ## Suggested batching
 - One commit: items 1 + 3 + 6 (params.rs cleanup, all doc/comment).
 - One commit: item 2 (editor repaint gating) + item 6's editor.rs comment.

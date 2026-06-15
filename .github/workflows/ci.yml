@@ -66,10 +66,15 @@ jobs:
         run: cargo run --release
 
       # VST3 host-conformance via Tracktion pluginval (params, buses, state, fuzz).
+      # --skip-gui-tests: the GUI Editor test opens a real X11/GL window via
+      # baseview, which needs an OpenGL/GLX stack. The runner has no GPU/DRM node
+      # and modern Mesa won't do indirect (server-side) software GLX, so GLX has no
+      # usable framebuffer config and baseview aborts (InvalidFBConfig). The editor
+      # is verified manually in Carla instead (see docs/img/stage3-egui-carla-render).
       - name: pluginval (VST3 conformance)
         run: |
           curl -fsSL -o /tmp/pluginval.zip \
             https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip
           unzip -o -q /tmp/pluginval.zip -d /tmp/pluginval
-          /tmp/pluginval/pluginval --strictness-level 8 \
+          /tmp/pluginval/pluginval --strictness-level 8 --skip-gui-tests \
             --validate target/bundled/deepsteps-plugin.vst3
