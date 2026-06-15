@@ -83,9 +83,23 @@ The PR shipped without a manual Carla render ("not yet done, pending reviewer ch
   -u WAYLAND_DISPLAY pluginval …` → exit 139 (SIGSEGV) at the Editor test. The
   resizable-window / text-scale commits are *not* implicated — they run fine with
   a display.
-- **Fix.** `.github/workflows/ci.yml`: install `xvfb` and wrap the pluginval
-  invocation in `xvfb-run -a`. Keeps the Editor test running (real GUI coverage)
-  rather than dropping it via pluginval's `--skip-gui-tests`.
+- **Fix (part 1, display).** `.github/workflows/ci.yml`: install `xvfb` and wrap
+  the pluginval invocation in `xvfb-run`. Keeps the Editor test running (real GUI
+  coverage) rather than dropping it via pluginval's `--skip-gui-tests`.
+- **Part 2: `InvalidFBConfig` abort.** With a display present, the Editor test then
+  aborted (exit 134) with `Could not fetch framebuffer config:
+  CreationFailed(InvalidFBConfig)` (`baseview/src/x11/visual_info.rs:30`); the
+  panic crosses the C FFI boundary (non-unwinding) → `Aborted (core dumped)`.
+  - **Root cause.** baseview asks GLX for an RGBA framebuffer config. The runner
+    has no GPU, and CI installed only `libgl-dev` (the libGL ABI) — not Mesa's
+    software DRI driver — so GLX could produce *no* usable FBConfig. Not
+    reproducible on a dev box that already has Mesa swrast/llvmpipe (both screen
+    depths pass there), which is why the bare-`xvfb` fix looked complete locally.
+  - **Fix.** Install `libgl1-mesa-dri` (provides llvmpipe/swrast), set
+    `LIBGL_ALWAYS_SOFTWARE=1` to force software GL, and start xvfb with a 24-bit
+    GLX screen (`--server-args="-screen 0 1280x1024x24 +extension GLX +render"`)
+    so an RGBA FBConfig exists. Verified locally: that exact command runs pluginval
+    strictness 8 to SUCCESS through all three editor sub-tests.
 
 ## Suggested batching
 - One commit: items 1 + 3 + 6 (params.rs cleanup, all doc/comment).
