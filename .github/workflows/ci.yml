@@ -23,7 +23,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libasound2-dev libgl-dev libjack-jackd2-dev \
             libx11-xcb-dev libxcb1-dev libxcb-icccm4-dev \
-            libxcursor-dev libxkbcommon-dev libxcb-shape0-dev libxcb-xfixes0-dev
+            libxcursor-dev libxkbcommon-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            xvfb
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -66,10 +67,13 @@ jobs:
         run: cargo run --release
 
       # VST3 host-conformance via Tracktion pluginval (params, buses, state, fuzz).
+      # pluginval's Editor test opens the plugin GUI, which creates a real X11/GL
+      # window via baseview. Headless CI has no display, so the window creation
+      # segfaults — run under xvfb to give it a virtual display.
       - name: pluginval (VST3 conformance)
         run: |
           curl -fsSL -o /tmp/pluginval.zip \
             https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip
           unzip -o -q /tmp/pluginval.zip -d /tmp/pluginval
-          /tmp/pluginval/pluginval --strictness-level 8 \
+          xvfb-run -a /tmp/pluginval/pluginval --strictness-level 8 \
             --validate target/bundled/deepsteps-plugin.vst3

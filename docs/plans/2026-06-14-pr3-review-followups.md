@@ -71,6 +71,22 @@ The PR shipped without a manual Carla render ("not yet done, pending reviewer ch
   whether `EguiState::from_size` is honored by the nih-plug VST3 wrapper at this rev,
   or whether the window needs an explicit resize request.
 
+### Known issue: pluginval Editor test segfaults headless (fixed in CI)
+- **Symptom.** CI pluginval step crashed with `Segmentation fault (core dumped)`
+  right at `Starting tests in: pluginval / Editor...` (strictness 8). The earlier
+  `Open plugin (cold/warm)` tests passed, so the crash was in editor *paint*, not
+  creation.
+- **Root cause.** Not a plugin bug. pluginval's Editor test opens the egui editor,
+  which creates a real X11/GL window via baseview. CI ran pluginval with no
+  `DISPLAY`, so window creation derefs null → SIGSEGV. Confirmed by reproduction:
+  `xvfb-run pluginval … --strictness-level 8` → SUCCESS; `env -u DISPLAY
+  -u WAYLAND_DISPLAY pluginval …` → exit 139 (SIGSEGV) at the Editor test. The
+  resizable-window / text-scale commits are *not* implicated — they run fine with
+  a display.
+- **Fix.** `.github/workflows/ci.yml`: install `xvfb` and wrap the pluginval
+  invocation in `xvfb-run -a`. Keeps the Editor test running (real GUI coverage)
+  rather than dropping it via pluginval's `--skip-gui-tests`.
+
 ## Suggested batching
 - One commit: items 1 + 3 + 6 (params.rs cleanup, all doc/comment).
 - One commit: item 2 (editor repaint gating) + item 6's editor.rs comment.
