@@ -7,7 +7,7 @@
 //! values are independent (a display mask and a playhead index) with no
 //! cross-variable invariant to protect.
 
-use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, Ordering};
 
 /// Playhead sentinel meaning "no step is currently playing" (transport stopped).
 pub const NO_STEP: usize = usize::MAX;
@@ -20,6 +20,11 @@ pub struct SharedState {
     /// Index of the step currently playing, for the editor's playhead highlight,
     /// or [`NO_STEP`] when the transport is stopped.
     pub current_step: AtomicUsize,
+    /// Per-step substep timing offsets (the decoder's raw `[0,1]` outputs), as
+    /// `f64::to_bits`. Written by the decoder on regeneration; read by the editor
+    /// so the capture/encode features can rebuild a full 32-dim sample from the
+    /// live pattern. Display/training only — never read by playback.
+    pub substeps: [AtomicU64; 16],
 }
 
 impl Default for SharedState {
@@ -27,6 +32,7 @@ impl Default for SharedState {
         Self {
             steps: AtomicU16::new(0),
             current_step: AtomicUsize::new(NO_STEP),
+            substeps: std::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
 }
@@ -64,6 +70,18 @@ impl SharedState {
     /// Read the currently-playing step index (or [`NO_STEP`]).
     pub fn current(&self) -> usize {
         self.current_step.load(Ordering::Relaxed)
+    }
+
+    /// Publish the decoder's per-step substep offsets (called on regeneration).
+    pub fn set_substeps(&self, ss: &[f64; 16]) {
+        for (a, &v) in self.substeps.iter().zip(ss.iter()) {
+            a.store(v.to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    /// Read the per-step substep offsets for pattern capture / encoding.
+    pub fn substeps(&self) -> [f64; 16] {
+        std::array::from_fn(|i| f64::from_bits(self.substeps[i].load(Ordering::Relaxed)))
     }
 }
 

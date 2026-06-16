@@ -6,7 +6,9 @@
 
 use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use crate::model_ops::TrainedModel;
 
 /// Default editor window size (compact layout; shrunk from the Stage-1 canvas in
 /// commit c42a1ff to fit the collapsed-grid pitch panel).
@@ -89,6 +91,13 @@ pub struct DeepStepsParams {
     #[persist = "editor-state"]
     pub editor_state: Arc<EguiState>,
 
+    /// Trained model (decoder + encoder op lists) persisted in DAW state, so a
+    /// model trained in-session survives save/reload and travels with presets.
+    /// `None` until the user trains; the baked `decoder.json` is the fallback.
+    /// Shared (same `Arc`) with `training::TrainShared` for hot-swap.
+    #[persist = "trained-model"]
+    pub trained_model: Arc<Mutex<Option<TrainedModel>>>,
+
     /// Latent dimension A driving the decoder (later host-MIDI-CC-mappable).
     #[id = "latentA"]
     pub latent_a: FloatParam,
@@ -136,6 +145,7 @@ impl Default for DeepStepsParams {
 
         Self {
             editor_state: EguiState::from_size(EDITOR_WIDTH, EDITOR_HEIGHT),
+            trained_model: Arc::new(Mutex::new(None)),
 
             latent_a: latent("Latent A"),
             latent_b: latent("Latent B"),
