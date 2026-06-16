@@ -7,33 +7,57 @@
 //! `ParamSetter`.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
-use nih_plug::prelude::Editor;
+use nih_plug::prelude::{AsyncExecutor, Editor, ParamSetter};
 use nih_plug_egui::{create_egui_editor, egui, resizable_window::ResizableWindow, widgets::ParamSlider};
 
 use crate::params::DeepStepsParams;
 use crate::shared::{SharedState, NO_STEP};
+use crate::training::{Task, TrainShared, TrainStatus};
 
 /// State handed to every egui frame.
 struct EditorState {
     params: Arc<DeepStepsParams>,
     shared: Arc<SharedState>,
+    train: Arc<TrainShared>,
+    exec: AsyncExecutor<crate::DeepSteps>,
+    /// Training hyperparameters, editable in the GUI (default to the upstream
+    /// `train_export.py` values). Atomics so the panel can mutate them while the
+    /// surrounding `EditorState` is only borrowed immutably (the egui frame).
+    epochs: AtomicUsize,
+    batch: AtomicUsize,
 }
 
 pub fn create(
     params: Arc<DeepStepsParams>,
     shared: Arc<SharedState>,
+    train: Arc<TrainShared>,
+    exec: AsyncExecutor<crate::DeepSteps>,
 ) -> Option<Box<dyn Editor>> {
     let egui_state = params.editor_state.clone();
     create_egui_editor(
         egui_state,
-        EditorState { params, shared },
+        EditorState {
+            params,
+            shared,
+            train,
+            exec,
+            epochs: AtomicUsize::new(200),
+            batch: AtomicUsize::new(16),
+        },
         |_ctx, _state| {},
         |ctx, setter, state| {
-            // Keep the playhead animating while the transport plays. When stopped
-            // (current == NO_STEP) let egui idle instead of spinning at full
-            // framerate — a grid click still triggers its own repaint.
-            if state.shared.current() != NO_STEP {
+            // Reclaim decoders retired by a hot-swap. This runs on the GUI thread
+            // (never the audio thread), so the old model's heap is freed here, not
+            // inside `process()` (see `TrainShared::swap_model`).
+            state.train.collect_garbage();
+
+            // Keep repainting while the playhead moves or a training run is in
+            // progress (so the progress bar advances). Otherwise let egui idle.
+            if state.shared.current() != NO_STEP
+                || matches!(state.train.status(), TrainStatus::Running | TrainStatus::Ingesting)
+            {
                 ctx.request_repaint();
             }
 
@@ -88,6 +112,8 @@ pub fn create(
                             labeled(ui, scale, "Scale", |ui| ui.add(ParamSlider::for_param(&p.scale, setter)));
                         });
 
+                    training_section(ui, setter, state);
+
                     egui::CollapsingHeader::new("Pitches")
                         .default_open(true)
                         .show(ui, |ui| {
@@ -114,6 +140,151 @@ pub fn create(
             });
         },
     )
+}
+
+/// The "Training" panel: build a dataset (capture live patterns or ingest audio
+/// files), train an autoencoder on a background thread with a live progress bar,
+/// and encode the current pattern back into the latent sliders. All heavy work
+/// is dispatched via `exec.execute_background`; the audio thread is untouched.
+fn training_section(ui: &mut egui::Ui, setter: &ParamSetter, state: &EditorState) {
+    // Clone the shared handles out so the closures below only borrow `state` for
+    // the editable `epochs`/`batch` fields (avoids overlapping borrows).
+    let train = state.train.clone();
+    let shared = state.shared.clone();
+    let params = state.params.clone();
+    let exec = state.exec.clone();
+
+    egui::CollapsingHeader::new("Training")
+        .default_open(false)
+        .show(ui, |ui| {
+            let status = train.status();
+            let busy = matches!(status, TrainStatus::Running | TrainStatus::Ingesting);
+            let n = train.dataset_len();
+
+            ui.horizontal(|ui| {
+                ui.label(format!("Dataset: {n}"));
+                if ui.button("Capture pattern").clicked() {
+                    let v = crate::dataset::encode_grid(shared.mask(), &shared.substeps());
+                    if let Ok(mut d) = train.dataset.lock() {
+                        d.push(v);
+                    }
+                }
+                if ui.add_enabled(!busy, egui::Button::new("Add audio…")).clicked() {
+                    // `pick_files()` is a blocking, modal native dialog: it stalls
+                    // this GUI frame until the user dismisses it. That is fine —
+                    // it blocks only the editor thread, never the audio thread —
+                    // and the actual decode/onset work is dispatched to the
+                    // background thread below.
+                    if let Some(files) = rfd::FileDialog::new()
+                        .add_filter("audio", &["wav", "flac"])
+                        .pick_files()
+                    {
+                        if let Ok(mut q) = train.pending_paths.lock() {
+                            q.extend(files);
+                        }
+                        exec.execute_background(Task::IngestAudio);
+                    }
+                }
+                if ui.add_enabled(n > 0 && !busy, egui::Button::new("Clear")).clicked() {
+                    if let Ok(mut d) = train.dataset.lock() {
+                        d.clear();
+                    }
+                }
+            });
+
+            ui.horizontal(|ui| {
+                // Atomics edited via a local copy, written back after the widget.
+                let mut epochs = state.epochs.load(Relaxed);
+                let mut batch = state.batch.load(Relaxed);
+                ui.label("Epochs");
+                if ui.add(egui::DragValue::new(&mut epochs).range(1..=5000)).changed() {
+                    state.epochs.store(epochs, Relaxed);
+                }
+                ui.label("Batch");
+                if ui.add(egui::DragValue::new(&mut batch).range(1..=512)).changed() {
+                    state.batch.store(batch, Relaxed);
+                }
+            });
+
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(n > 0 && !busy, egui::Button::new("Train"))
+                    .clicked()
+                {
+                    exec.execute_background(Task::Train {
+                        epochs: state.epochs.load(Relaxed),
+                        batch: state.batch.load(Relaxed),
+                        // Fixed seed -> reproducible training for a given dataset.
+                        seed: 0x5_1EED,
+                    });
+                }
+                if status == TrainStatus::Running
+                    && ui.button("Cancel").clicked()
+                {
+                    train.cancel.store(true, Relaxed);
+                }
+            });
+
+            if status == TrainStatus::Running {
+                let e = train.epoch.load(Relaxed);
+                let t = train.total_epochs.load(Relaxed).max(1);
+                ui.add(
+                    egui::ProgressBar::new(e as f32 / t as f32)
+                        .text(format!("epoch {e}/{t}   loss {:.4}", train.last_loss())),
+                );
+            }
+
+            ui.label(format!("Status: {}", status_text(status)));
+
+            ui.horizontal(|ui| {
+                let trained = train.has_trained_model();
+                ui.label(format!(
+                    "Model: {}",
+                    if trained { "Trained" } else { "Default (baked)" }
+                ));
+                // The encoder's output is unbounded, but the latent params are
+                // `[0,1]`, so `set_latents` clamps. Encoding then re-decoding a
+                // pattern is therefore approximate, not a faithful round-trip —
+                // flag it on hover so the result isn't surprising.
+                if ui
+                    .add_enabled(trained, egui::Button::new("Encode pattern → latent"))
+                    .on_hover_text(
+                        "Sets the latent sliders to this pattern's encoded latent.\n\
+                         Values are clamped to 0..1, so re-decoding is approximate.",
+                    )
+                    .clicked()
+                {
+                    let grid = crate::dataset::encode_grid(shared.mask(), &shared.substeps());
+                    let x: Vec<f64> = grid.iter().map(|&v| v as f64).collect();
+                    if let Some(z) = train.encode(&x) {
+                        set_latents(setter, &params, z);
+                    }
+                }
+            });
+        });
+}
+
+fn status_text(s: TrainStatus) -> &'static str {
+    match s {
+        TrainStatus::Idle => "idle",
+        TrainStatus::Ingesting => "ingesting audio…",
+        TrainStatus::Running => "training…",
+        TrainStatus::Done => "done",
+        TrainStatus::Cancelled => "cancelled",
+        TrainStatus::Error => "error (empty dataset?)",
+    }
+}
+
+/// Write a latent vector into the 4 latent params as a single automation gesture
+/// each, clamped to the params' `[0,1]` range (the encoder output is unbounded).
+fn set_latents(setter: &ParamSetter, p: &DeepStepsParams, z: [f64; 4]) {
+    let targets = [&p.latent_a, &p.latent_b, &p.latent_c, &p.latent_d];
+    for (param, &v) in targets.iter().zip(z.iter()) {
+        let val = (v as f32).clamp(0.0, 1.0);
+        setter.begin_set_parameter(*param);
+        setter.set_parameter(*param, val);
+        setter.end_set_parameter(*param);
+    }
 }
 
 /// One labelled row: fixed-width label + the widget. Label box and row height

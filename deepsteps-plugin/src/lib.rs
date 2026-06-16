@@ -1,16 +1,23 @@
+pub mod audio;
+pub mod autoencoder;
+pub mod dataset;
 pub mod decoder;
 pub mod editor;
+pub mod model_ops;
 pub mod params;
 pub mod sequencer;
 pub mod shared;
+pub mod training;
 
 use nih_plug::prelude::*;
 use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 
 use decoder::Decoder;
 use params::{DeepStepsParams, ScaleParam};
 use sequencer::{quantize, schedule_step, steps_in_range, Scale, STEP_BEATS};
 use shared::{pack, SharedState, NO_STEP};
+use training::{Task, TrainShared};
 
 /// A NoteOff scheduled to fire in a future process block. `remaining` is the
 /// sample count from the *current* block's start until the NoteOff should fire;
@@ -20,9 +27,15 @@ struct PendingOff {
     remaining: i64,
 }
 
-struct DeepSteps {
+pub struct DeepSteps {
     params: Arc<DeepStepsParams>,
-    decoder: Decoder,
+    /// Cross-thread training state. Owns the live (hot-swappable) decoder the
+    /// audio thread runs, plus the dataset and progress atomics.
+    train: Arc<TrainShared>,
+    /// Last `model_generation` the audio thread acted on. When it falls behind
+    /// `train.model_generation` a swap happened, so `last_latent` is invalidated
+    /// to force a regenerate with the new model.
+    model_gen_seen: u64,
     /// Last latent vector that produced `steps`/`substeps`. Initialised to NaN so
     /// the first `maybe_regen` always regenerates (NaN != anything).
     last_latent: [f64; 4],
@@ -45,9 +58,12 @@ impl Default for DeepSteps {
                 Decoder::empty()
             }
         };
+        let params = Arc::new(DeepStepsParams::default());
+        let train = Arc::new(TrainShared::new(decoder, params.trained_model.clone()));
         Self {
-            params: Arc::new(DeepStepsParams::default()),
-            decoder,
+            params,
+            train,
+            model_gen_seen: 0,
             last_latent: [f64::NAN; 4],
             substeps: [0.0; 16],
             shared: Arc::new(SharedState::default()),
@@ -77,8 +93,16 @@ impl DeepSteps {
         }
     }
 
-    /// Re-run the decoder iff the latent params changed since last call.
+    /// Re-run the decoder iff the latent params changed since last call, or the
+    /// model was hot-swapped by a finished training run.
     fn maybe_regen(&mut self) {
+        // A model swap bumps the generation; invalidate the cache so the new
+        // decoder regenerates even if the latent vector is unchanged.
+        let gen = self.train.model_generation.load(Relaxed);
+        if gen != self.model_gen_seen {
+            self.model_gen_seen = gen;
+            self.last_latent = [f64::NAN; 4];
+        }
         let p = &self.params;
         let z = [
             p.latent_a.value() as f64,
@@ -87,14 +111,22 @@ impl DeepSteps {
             p.latent_d.value() as f64,
         ];
         if z != self.last_latent {
-            let (s, ss) = self.decoder.generate(&z);
+            // Wait-free load of the live decoder (audio thread never locks).
+            let decoder = self.train.model.load();
+            let (s, ss) = decoder.generate(&z);
             // Publish the freshly-decoded pattern as the playback source of
             // truth. This overwrites any user grid toggles — moving a latent
             // regenerates, which is the intended generative behaviour.
             self.shared.set_mask(pack(&s));
+            self.shared.set_substeps(&ss);
             self.substeps = ss;
             self.last_latent = z;
+            // `decoder` guard drops here, at the end of the block.
         }
+        // Acknowledge this generation *after* any load guard above is dropped, so
+        // `collect_garbage` can prove the retired decoder has no live reader and
+        // free it off the audio thread (see `TrainShared::swap_model`).
+        self.train.ack_generation(gen);
     }
 }
 
@@ -121,14 +153,20 @@ impl Plugin for DeepSteps {
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
     type SysExMessage = ();
-    type BackgroundTask = ();
+    type BackgroundTask = Task;
+
+    /// Runs background tasks (training, audio ingestion) off the audio and GUI
+    /// threads. Queried once after construction; captures the shared state.
+    fn task_executor(&mut self) -> TaskExecutor<Self> {
+        training::executor(self.train.clone())
+    }
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
     }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        editor::create(self.params.clone(), self.shared.clone())
+    fn editor(&mut self, async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        editor::create(self.params.clone(), self.shared.clone(), self.train.clone(), async_executor)
     }
 
     fn initialize(
@@ -138,6 +176,27 @@ impl Plugin for DeepSteps {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
+
+        // State has already been restored at this point: if the host loaded a
+        // trained model, hot-swap it into the audio + encode paths (overriding
+        // the baked default). `swap_model` bumps the generation, forcing
+        // `maybe_regen` to pick it up, and retires the displaced decoder off the
+        // audio thread. `initialize` can be called repeatedly (e.g. on a
+        // sample-rate change) and also runs on a project/preset reload, so we
+        // restore every time rather than guarding on generation — the graveyard
+        // bounds the cost and the swap never frees on the audio thread.
+        if let Ok(slot) = self.params.trained_model.lock() {
+            if let Some(tm) = slot.as_ref() {
+                if let Ok(dec) = model_ops::to_decoder(&tm.decoder) {
+                    self.train.swap_model(dec);
+                }
+                if let Ok(enc) = model_ops::to_decoder(&tm.encoder) {
+                    self.train.encoder.store(Arc::new(Some(enc)));
+                }
+            }
+        }
+        // Reclaim anything the restore swap retired (main thread, not audio).
+        self.train.collect_garbage();
         true
     }
 
