@@ -464,6 +464,12 @@ impl Autoencoder {
     /// Train on `data` (each row a 32-dim sample). `on_epoch(epoch, avg_loss)`
     /// is called after every epoch; returning `false` cancels training.
     /// Returns the number of completed epochs.
+    ///
+    /// Note: the backward pass sums (does not average) the per-element loss
+    /// gradient over a batch's rows, matching the Python original. So the
+    /// weight-gradient magnitude scales with `batch`, and `batch` acts as a
+    /// secondary learning-rate knob — Adam's per-parameter normalisation absorbs
+    /// most of this, but larger batches still train slightly more aggressively.
     pub fn fit(
         &mut self,
         data: &[[f32; 32]],

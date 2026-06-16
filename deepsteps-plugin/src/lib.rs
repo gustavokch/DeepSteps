@@ -121,7 +121,12 @@ impl DeepSteps {
             self.shared.set_substeps(&ss);
             self.substeps = ss;
             self.last_latent = z;
+            // `decoder` guard drops here, at the end of the block.
         }
+        // Acknowledge this generation *after* any load guard above is dropped, so
+        // `collect_garbage` can prove the retired decoder has no live reader and
+        // free it off the audio thread (see `TrainShared::swap_model`).
+        self.train.ack_generation(gen);
     }
 }
 
@@ -174,18 +179,24 @@ impl Plugin for DeepSteps {
 
         // State has already been restored at this point: if the host loaded a
         // trained model, hot-swap it into the audio + encode paths (overriding
-        // the baked default). The bump forces `maybe_regen` to use it.
+        // the baked default). `swap_model` bumps the generation, forcing
+        // `maybe_regen` to pick it up, and retires the displaced decoder off the
+        // audio thread. `initialize` can be called repeatedly (e.g. on a
+        // sample-rate change) and also runs on a project/preset reload, so we
+        // restore every time rather than guarding on generation — the graveyard
+        // bounds the cost and the swap never frees on the audio thread.
         if let Ok(slot) = self.params.trained_model.lock() {
             if let Some(tm) = slot.as_ref() {
                 if let Ok(dec) = model_ops::to_decoder(&tm.decoder) {
-                    self.train.model.store(Arc::new(dec));
+                    self.train.swap_model(dec);
                 }
                 if let Ok(enc) = model_ops::to_decoder(&tm.encoder) {
                     self.train.encoder.store(Arc::new(Some(enc)));
                 }
-                self.train.model_generation.fetch_add(1, Relaxed);
             }
         }
+        // Reclaim anything the restore swap retired (main thread, not audio).
+        self.train.collect_garbage();
         true
     }
 

@@ -7,9 +7,20 @@
 //! The audio thread only ever does a wait-free `model.load()` (an `ArcSwap`) and
 //! a few `Relaxed` atomic reads — it never locks a `Mutex`. The dataset and
 //! trained-model `Mutex`es are touched solely by the GUI and background threads.
+//!
+//! Hot-swaps go through [`TrainShared::swap_model`], which retires the previous
+//! decoder into a graveyard instead of dropping it. A wait-free `load()` is not
+//! allocation-free: if the audio thread held the last reference to a swapped-out
+//! `Arc<Decoder>`, dropping its load guard would free that decoder's heap inside
+//! `process()`. The graveyard keeps the old decoder alive until the audio thread
+//! has published (via `gen_acked`) that it has moved past it, at which point
+//! [`TrainShared::collect_garbage`] drops it on the GUI/background thread.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{
+    AtomicBool, AtomicU64, AtomicU8, AtomicUsize,
+    Ordering::{Acquire, Relaxed, Release},
+};
 use std::sync::{Arc, Mutex};
 
 use arc_swap::ArcSwap;
@@ -91,6 +102,16 @@ pub struct TrainShared {
     pub encoder: ArcSwap<Option<Decoder>>,
     /// Persisted trained model (shared with the `#[persist]` param field).
     pub trained_model: Arc<Mutex<Option<TrainedModel>>>,
+
+    /// Decoders retired by [`swap_model`](Self::swap_model), tagged with the
+    /// `model_generation` that replaced them. Kept alive — never dropped on the
+    /// audio thread — until `gen_acked` shows the audio thread has moved past
+    /// them, then dropped by [`collect_garbage`](Self::collect_garbage).
+    graveyard: Mutex<Vec<(u64, Arc<Decoder>)>>,
+    /// Highest `model_generation` the audio thread has finished a regen for,
+    /// published at the end of `maybe_regen` *after* its load guard is dropped.
+    /// Lets `collect_garbage` prove an old decoder has no live audio reader left.
+    pub gen_acked: AtomicU64,
 }
 
 impl TrainShared {
@@ -110,7 +131,42 @@ impl TrainShared {
             model: ArcSwap::from_pointee(initial_decoder),
             encoder: ArcSwap::from_pointee(None),
             trained_model,
+            graveyard: Mutex::new(Vec::new()),
+            gen_acked: AtomicU64::new(0),
         }
+    }
+
+    /// Hot-swap the audio-thread decoder, retiring the previous one into the
+    /// graveyard so its eventual `Drop` (heap free) runs on a non-audio thread,
+    /// never inside `process()`. Bumps `model_generation` so the audio thread
+    /// regenerates. Returns the new generation. Call only off the audio thread.
+    pub fn swap_model(&self, dec: Decoder) -> u64 {
+        // Publish the new decoder pointer *before* bumping the generation, so the
+        // audio thread never sees a new generation pointing at the old decoder.
+        let old = self.model.swap(Arc::new(dec));
+        let gen = self.model_generation.fetch_add(1, Relaxed) + 1;
+        if let Ok(mut g) = self.graveyard.lock() {
+            g.push((gen, old));
+        }
+        gen
+    }
+
+    /// Drop every retired decoder the audio thread has provably finished with
+    /// (`gen_acked >= gen`). Runs on the GUI/background thread; the heap free of
+    /// each dropped decoder therefore happens here, off the audio thread. The
+    /// `Acquire` load pairs with the audio thread's `Release` store of
+    /// `gen_acked`, ordering its load-guard drop before this drop.
+    pub fn collect_garbage(&self) {
+        let acked = self.gen_acked.load(Acquire);
+        if let Ok(mut g) = self.graveyard.lock() {
+            g.retain(|(gen, _)| acked < *gen);
+        }
+    }
+
+    /// Audio thread: record that a `maybe_regen` cycle for `gen` is complete and
+    /// its load guard dropped. `Release` so `collect_garbage`'s `Acquire` sees it.
+    pub fn ack_generation(&self, gen: u64) {
+        self.gen_acked.store(gen, Release);
     }
 
     pub fn status(&self) -> TrainStatus {
@@ -142,9 +198,14 @@ impl TrainShared {
 
 /// Build the background task executor closure. Called once by `Plugin::task_executor`.
 pub fn executor(train: Arc<TrainShared>) -> Box<dyn Fn(Task) + Send> {
-    Box::new(move |task| match task {
-        Task::Train { epochs, batch, seed } => run_training(&train, epochs, batch, seed),
-        Task::IngestAudio => run_ingest(&train),
+    Box::new(move |task| {
+        // Reclaim retired decoders here too (this is a non-audio thread), so the
+        // graveyard is bounded even when the editor is closed.
+        train.collect_garbage();
+        match task {
+            Task::Train { epochs, batch, seed } => run_training(&train, epochs, batch, seed),
+            Task::IngestAudio => run_ingest(&train),
+        }
     })
 }
 
@@ -180,15 +241,18 @@ fn run_training(train: &Arc<TrainShared>, epochs: usize, batch: usize, seed: u64
     match (dec_exp, enc_exp) {
         (Ok(dec_exp), Ok(enc_exp)) => {
             if let Ok(dec) = model_ops::to_decoder(&dec_exp) {
-                train.model.store(Arc::new(dec));
+                // Retiring swap (bumps model_generation); old decoder is freed
+                // off the audio thread by `collect_garbage`.
+                train.swap_model(dec);
             }
             if let Ok(enc) = model_ops::to_decoder(&enc_exp) {
+                // The encoder is never read on the audio thread, so a plain store
+                // (which drops the old encoder on this thread) is already safe.
                 train.encoder.store(Arc::new(Some(enc)));
             }
             if let Ok(mut slot) = train.trained_model.lock() {
                 *slot = Some(TrainedModel { decoder: dec_exp, encoder: enc_exp });
             }
-            train.model_generation.fetch_add(1, Relaxed);
             train.set_status(if completed < epochs {
                 TrainStatus::Cancelled
             } else {
@@ -217,11 +281,13 @@ fn run_ingest(train: &Arc<TrainShared>) {
             Err(e) => nih_plug::nih_log!("DeepSteps: ingest failed for {p:?}: {e}"),
         }
     }
-    // Restore the prior status (e.g. keep showing Done) unless training is active.
-    train.set_status(if prev == TrainStatus::Running {
-        TrainStatus::Running
-    } else {
+    // Restore whatever status was showing before the ingest (e.g. keep showing
+    // `Done` from a prior training run), but never resurrect a transient
+    // `Ingesting` — fall back to `Idle` for that one case.
+    train.set_status(if prev == TrainStatus::Ingesting {
         TrainStatus::Idle
+    } else {
+        prev
     });
 }
 
@@ -271,6 +337,38 @@ mod tests {
         let dec = train.model.load();
         let out = dec.forward(&[z[0], z[1], z[2], z[3]]);
         assert_eq!(out.len(), 32);
+    }
+
+    /// M1: retiring swaps park old decoders in the graveyard; `collect_garbage`
+    /// drops only those the audio thread has acked, and the live model still runs.
+    #[test]
+    fn swap_model_retires_and_collects() {
+        let train = shared();
+
+        // Three swaps -> three retired decoders, generation advances to 3.
+        for _ in 0..3 {
+            train.swap_model(Decoder::empty());
+        }
+        assert_eq!(train.model_generation.load(Relaxed), 3);
+        assert_eq!(train.graveyard.lock().unwrap().len(), 3);
+
+        // Audio thread hasn't acked anything yet: nothing is safe to drop.
+        train.collect_garbage();
+        assert_eq!(train.graveyard.lock().unwrap().len(), 3);
+
+        // Audio acks through generation 2: gens 1 and 2 are reclaimed, 3 stays.
+        train.ack_generation(2);
+        train.collect_garbage();
+        assert_eq!(train.graveyard.lock().unwrap().len(), 1);
+
+        // Acking the final generation drains the rest.
+        train.ack_generation(3);
+        train.collect_garbage();
+        assert!(train.graveyard.lock().unwrap().is_empty());
+
+        // The live (most recent) decoder is intact and still generates a pattern.
+        let (steps, _) = train.model.load().generate(&[0.5, 0.5, 0.5, 0.5]);
+        assert_eq!(steps.len(), 16);
     }
 
     /// Training with an empty dataset reports an error and swaps nothing.

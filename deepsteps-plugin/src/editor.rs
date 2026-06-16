@@ -48,6 +48,11 @@ pub fn create(
         },
         |_ctx, _state| {},
         |ctx, setter, state| {
+            // Reclaim decoders retired by a hot-swap. This runs on the GUI thread
+            // (never the audio thread), so the old model's heap is freed here, not
+            // inside `process()` (see `TrainShared::swap_model`).
+            state.train.collect_garbage();
+
             // Keep repainting while the playhead moves or a training run is in
             // progress (so the progress bar advances). Otherwise let egui idle.
             if state.shared.current() != NO_STEP
@@ -165,6 +170,11 @@ fn training_section(ui: &mut egui::Ui, setter: &ParamSetter, state: &EditorState
                     }
                 }
                 if ui.add_enabled(!busy, egui::Button::new("Add audio…")).clicked() {
+                    // `pick_files()` is a blocking, modal native dialog: it stalls
+                    // this GUI frame until the user dismisses it. That is fine —
+                    // it blocks only the editor thread, never the audio thread —
+                    // and the actual decode/onset work is dispatched to the
+                    // background thread below.
                     if let Some(files) = rfd::FileDialog::new()
                         .add_filter("audio", &["wav", "flac"])
                         .pick_files()
@@ -232,8 +242,16 @@ fn training_section(ui: &mut egui::Ui, setter: &ParamSetter, state: &EditorState
                     "Model: {}",
                     if trained { "Trained" } else { "Default (baked)" }
                 ));
+                // The encoder's output is unbounded, but the latent params are
+                // `[0,1]`, so `set_latents` clamps. Encoding then re-decoding a
+                // pattern is therefore approximate, not a faithful round-trip —
+                // flag it on hover so the result isn't surprising.
                 if ui
                     .add_enabled(trained, egui::Button::new("Encode pattern → latent"))
+                    .on_hover_text(
+                        "Sets the latent sliders to this pattern's encoded latent.\n\
+                         Values are clamped to 0..1, so re-decoding is approximate.",
+                    )
                     .clicked()
                 {
                     let grid = crate::dataset::encode_grid(shared.mask(), &shared.substeps());
