@@ -243,7 +243,7 @@ mod tests {
         {
             let mut d = train.dataset.lock().unwrap();
             for i in 0..8u16 {
-                let mask = (i.wrapping_mul(37) | 1) & 0xFFFF;
+                let mask = i.wrapping_mul(37) | 1;
                 let mut ss = [0.0f64; 16];
                 ss[(i % 16) as usize] = 0.5;
                 d.push(encode_grid(mask, &ss));

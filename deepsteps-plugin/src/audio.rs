@@ -239,10 +239,7 @@ mod tests {
         // Every real click should have a detected onset within ~1.5 hops.
         let tol = (HOP as f32 * 1.5) as usize + FRAME; // detection lags by ~a frame
         for &c in &clicks {
-            let found = onsets.iter().any(|&o| {
-                let d = if o > c { o - c } else { c - o };
-                d <= tol
-            });
+            let found = onsets.iter().any(|&o| o.abs_diff(c) <= tol);
             assert!(found, "no onset near click {c}; got {onsets:?}");
         }
         // Should not produce a flood of spurious onsets.

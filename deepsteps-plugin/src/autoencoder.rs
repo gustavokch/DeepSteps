@@ -38,8 +38,8 @@ impl Mat {
     fn col_mean(&self) -> Vec<f64> {
         let mut m = vec![0.0; self.cols];
         for r in 0..self.rows {
-            for c in 0..self.cols {
-                m[c] += self.at(r, c);
+            for (c, mc) in m.iter_mut().enumerate() {
+                *mc += self.at(r, c);
             }
         }
         for v in &mut m {
@@ -410,27 +410,32 @@ impl Autoencoder {
         let input_dim = 32;
         let latent_dim = 4;
         let mut rng = Rng::new(seed);
-        let mut layers = Vec::new();
+        let relu = || Layer::Activation { kind: ActKind::Relu, in_cache: Mat::zeros(0, 0) };
 
-        // Encoder 32 -> 16 -> 8 -> 4
-        layers.push(Layer::dense(32, 16, LR, B1, B2, &mut rng));
-        layers.push(Layer::Activation { kind: ActKind::Relu, in_cache: Mat::zeros(0, 0) });
-        layers.push(Layer::bn(16, BN_MOMENTUM, LR, B1, B2));
-        layers.push(Layer::dense(16, 8, LR, B1, B2, &mut rng));
-        layers.push(Layer::Activation { kind: ActKind::Relu, in_cache: Mat::zeros(0, 0) });
-        layers.push(Layer::bn(8, BN_MOMENTUM, LR, B1, B2));
-        layers.push(Layer::dense(8, 4, LR, B1, B2, &mut rng));
+        // Encoder 32 -> 16 -> 8 -> 4. (Each `dense` borrows `rng` only for its
+        // own call, so the sequential `&mut rng` uses don't overlap.)
+        let mut layers = vec![
+            Layer::dense(32, 16, LR, B1, B2, &mut rng),
+            relu(),
+            Layer::bn(16, BN_MOMENTUM, LR, B1, B2),
+            Layer::dense(16, 8, LR, B1, B2, &mut rng),
+            relu(),
+            Layer::bn(8, BN_MOMENTUM, LR, B1, B2),
+            Layer::dense(8, 4, LR, B1, B2, &mut rng),
+        ];
         let enc_len = layers.len();
 
-        // Decoder 4 -> 8 -> 16 -> 32
-        layers.push(Layer::dense(4, 8, LR, B1, B2, &mut rng));
-        layers.push(Layer::Activation { kind: ActKind::Relu, in_cache: Mat::zeros(0, 0) });
-        layers.push(Layer::bn(8, BN_MOMENTUM, LR, B1, B2));
-        layers.push(Layer::dense(8, 16, LR, B1, B2, &mut rng));
-        layers.push(Layer::Activation { kind: ActKind::Relu, in_cache: Mat::zeros(0, 0) });
-        layers.push(Layer::bn(16, BN_MOMENTUM, LR, B1, B2));
-        layers.push(Layer::dense(16, 32, LR, B1, B2, &mut rng));
-        layers.push(Layer::Activation { kind: ActKind::Sigmoid, in_cache: Mat::zeros(0, 0) });
+        // Decoder 4 -> 8 -> 16 -> 32.
+        layers.extend([
+            Layer::dense(4, 8, LR, B1, B2, &mut rng),
+            relu(),
+            Layer::bn(8, BN_MOMENTUM, LR, B1, B2),
+            Layer::dense(8, 16, LR, B1, B2, &mut rng),
+            relu(),
+            Layer::bn(16, BN_MOMENTUM, LR, B1, B2),
+            Layer::dense(16, 32, LR, B1, B2, &mut rng),
+            Layer::Activation { kind: ActKind::Sigmoid, in_cache: Mat::zeros(0, 0) },
+        ]);
 
         Autoencoder { layers, enc_len, input_dim, latent_dim }
     }
@@ -491,8 +496,8 @@ impl Autoencoder {
                 // Build batch matrix (target == input for an autoencoder).
                 let mut x = Mat::zeros(rows, 32);
                 for (r, &idx) in order[start..end].iter().enumerate() {
-                    for c in 0..32 {
-                        x.set(r, c, data[idx][c] as f64);
+                    for (c, &val) in data[idx].iter().enumerate() {
+                        x.set(r, c, val as f64);
                     }
                 }
                 let recon = self.forward_all(&x, true);
@@ -612,8 +617,8 @@ mod tests {
             },
             {
                 let mut v = [0.0f32; 32];
-                for i in 0..16 {
-                    v[i] = (i % 2) as f32;
+                for (i, slot) in v.iter_mut().enumerate().take(16) {
+                    *slot = (i % 2) as f32;
                 }
                 v
             },
@@ -637,8 +642,8 @@ mod tests {
         // Reconstruction (infer mode) should match each input closely.
         let mut x = Mat::zeros(data.len(), 32);
         for (r, row) in data.iter().enumerate() {
-            for c in 0..32 {
-                x.set(r, c, row[c] as f64);
+            for (c, &val) in row.iter().enumerate() {
+                x.set(r, c, val as f64);
             }
         }
         let recon = ae.forward_all(&x, false);
